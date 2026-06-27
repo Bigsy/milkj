@@ -1,5 +1,7 @@
 # MilkJ
 
+https://plugins.jetbrains.com/plugin/32518-milkj
+
 MilkJ adds a rich-text Markdown editor tab to JetBrains IDEs.
 
 Open a Markdown file as usual and switch to the **MilkJ** tab to edit with a clean WYSIWYG experience while keeping the IDE's native Markdown editor available alongside it.
