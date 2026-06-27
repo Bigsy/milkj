@@ -1,0 +1,59 @@
+# IntelliJ project files
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Gradle
+.gradle/
+build/
+!gradle-wrapper.jar
+.gradletasknamecache
+
+# IntelliJ plugin development
+.sandbox/
+.intellijPlatform/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Logs
+*.log
+
+# Local configuration
+local.properties
+AGENTS.md
+
+# Compiled files
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# Generated / cache
+bin/
+gen/
+.cache/
+.kotlin/
+
+# Frontend (Milkdown / Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+.pnpm-store/
+# Built Milkdown bundle is generated into resources by the frontend build:
+src/main/resources/web/assets/
+src/main/resources/web/index.html
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+tmp/
+temp/
+test.md
+
+CLAUDE.md

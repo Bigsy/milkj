@@ -1,0 +1,38 @@
+<idea-plugin>
+    <id>com.hedworth.milkj</id>
+    <name>MilkJ</name>
+    <vendor url="https://github.com/Bigsy">Bill Hedworth</vendor>
+
+    <description><![CDATA[
+    A WYSIWYG Markdown editor for JetBrains IDEs, powered by <a href="https://milkdown.dev">Milkdown</a>.
+    <br/><br/>
+    MilkJ adds a rich "what you see is what you get" editing surface for Markdown files, rendered with
+    Milkdown inside an embedded JCEF browser. It appears as an editor tab right next to IntelliJ's
+    built-in Markdown editor &mdash; write in WYSIWYG, then switch back to the native source/preview
+    editor whenever you like.
+    ]]></description>
+
+    <!-- Product / plugin compatibility -->
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.intellij.plugins.markdown</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="com.hedworth.milkj.settings.MilkJSettings"/>
+        <applicationConfigurable
+                parentId="tools"
+                instance="com.hedworth.milkj.settings.MilkJConfigurable"
+                id="com.hedworth.milkj.settings"
+                displayName="MilkJ"/>
+
+        <!--
+          Registers the Milkdown WYSIWYG editor as an additional editor tab for Markdown files.
+          PLACE_AFTER_DEFAULT_EDITOR keeps IntelliJ's native Markdown editor as the default tab and
+          adds "MilkJ" as a switchable tab beside it (tweak the policy in the provider).
+        -->
+        <fileEditorProvider implementation="com.hedworth.milkj.editor.MilkJEditorProvider"/>
+    </extensions>
+
+    <actions>
+        <!-- TODO: actions (e.g. "Open in MilkJ", toggle, insert-table) go here. -->
+    </actions>
+</idea-plugin>

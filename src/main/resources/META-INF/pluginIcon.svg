@@ -1,0 +1,24 @@
+<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MilkJ icon: a milk drop with a J">
+  <defs>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1" flood-opacity="0.3"/>
+    </filter>
+    <linearGradient id="milk" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9eef5"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="80" height="80" rx="12" fill="#111419"/>
+  <rect x="8" y="8" width="64" height="64" rx="12" fill="#1b1f26" filter="url(#softShadow)"/>
+
+  <!-- Milk drop -->
+  <path d="M40 16 C40 16 24 38 24 50 a16 16 0 1 0 32 0 C56 38 40 16 40 16 Z"
+        fill="url(#milk)" filter="url(#softShadow)"/>
+
+  <!-- J carved into the drop -->
+  <text x="40" y="60" text-anchor="middle"
+        font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+        font-size="30" font-weight="800" fill="#111419">J</text>
+</svg>

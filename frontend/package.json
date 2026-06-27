@@ -1,0 +1,26 @@
+{
+  "name": "@milkj/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.9.0",
+  "description": "Milkdown WYSIWYG editor bundle embedded in the MilkJ IntelliJ plugin via JCEF.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/language": "6.12.4",
+    "@codemirror/language-data": "6.5.2",
+    "@milkdown/crepe": "7.21.2",
+    "@milkdown/kit": "7.21.2",
+    "@milkdown/theme-nord": "7.21.2",
+    "mermaid": "11.16.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
+  }
+}
