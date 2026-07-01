@@ -67,9 +67,7 @@ let currentReadonly = false;
 let crepe: Crepe | undefined;
 let editorReady = false;
 let readySent = false;
-let mermaidRenderEpoch = 0;
-let mermaidObserver: MutationObserver | undefined;
-let renderingMermaid = false;
+let mermaidRenderSeq = 0;
 
 // Milkdown's listener plugin fires markdownUpdated ~200ms (debounced) after ANY doc-changing
 // transaction — including Crepe's own init/normalization transactions and content the IDE just
@@ -97,7 +95,7 @@ for (const type of ["keydown", "pointerdown", "paste", "cut", "drop"]) {
 applyChrome();
 
 async function createEditor(markdown: string) {
-  mermaidObserver?.disconnect();
+  await crepe?.destroy().catch(() => undefined);
   root.replaceChildren();
   crepe = new Crepe({
     root,
@@ -105,6 +103,17 @@ async function createEditor(markdown: string) {
     featureConfigs: {
       [CrepeFeature.CodeMirror]: {
         languages: milkjCodeLanguages,
+        // Renders Mermaid fences through the code-block component's preview panel: the component
+        // re-invokes this whenever the block's content or language changes, and sanitizes the
+        // result (Mermaid's SVG/foreignObject included) before inserting it.
+        renderPreview: (language, content, applyPreview) => {
+          if (!/^(mermaid|mmd)$/i.test(language) || !content.trim()) {
+            return null;
+          }
+          void renderMermaidPreview(content, applyPreview);
+          // Returning undefined marks the preview as async; the component shows its loading
+          // placeholder until applyPreview delivers the diagram.
+        },
       },
     },
   });
@@ -116,12 +125,33 @@ async function createEditor(markdown: string) {
       if (performance.now() >= suppressEchoUntil) {
         window.milkjSendToIde?.(`markdown:${markdown}`);
       }
-      scheduleMermaidRender();
     });
   });
   suppressMarkdownEchoes();
-  installMermaidObserver();
-  scheduleMermaidRender();
+}
+
+async function renderMermaidPreview(
+  source: string,
+  applyPreview: (value: null | string | HTMLElement) => void,
+) {
+  const id = `milkj-mermaid-${++mermaidRenderSeq}`;
+  const container = document.createElement("div");
+  container.className = "milkj-mermaid-render";
+  try {
+    const { svg } = await mermaid.render(id, source.trim());
+    container.innerHTML = svg;
+  } catch (error) {
+    // Failed renders can leave mermaid's temporary element behind.
+    document.getElementById(`d${id}`)?.remove();
+    container.classList.add("milkj-mermaid-render-error");
+    container.textContent =
+      error instanceof Error ? error.message : "Unable to render Mermaid diagram.";
+  }
+  applyPreview(container);
+}
+
+function hasMermaidBlocks(markdown: string): boolean {
+  return /```(?:mermaid|mmd)\b/i.test(markdown);
 }
 
 function applyChrome() {
@@ -131,7 +161,6 @@ function applyChrome() {
     startOnLoad: false,
     theme: effectiveMermaidTheme(),
   });
-  scheduleMermaidRender();
 }
 
 function effectiveMermaidTheme(): MermaidBuiltInTheme {
@@ -152,145 +181,6 @@ function effectiveMermaidTheme(): MermaidBuiltInTheme {
     default:
       return "default";
   }
-}
-
-function scheduleMermaidRender() {
-  const epoch = ++mermaidRenderEpoch;
-  window.setTimeout(() => {
-    if (epoch === mermaidRenderEpoch) {
-      void renderMermaidPreviews();
-    }
-  }, 50);
-}
-
-async function renderMermaidPreviews() {
-  mermaidObserver?.disconnect();
-  renderingMermaid = true;
-
-  const sources = extractMermaidSources(currentMarkdown);
-  try {
-    if (sources.length === 0) {
-      root.querySelectorAll(".milkj-mermaid-render").forEach((node) => node.remove());
-      return;
-    }
-
-    const usedSourceIndexes = new Set<number>();
-    const codeBlocks = Array.from(root.querySelectorAll(".milkdown-code-block, pre"))
-      .filter((codeBlock) => !codeBlock.closest(".milkj-mermaid-render"));
-
-    for (const codeBlock of codeBlocks) {
-      const [existingPreview, ...duplicatePreviews] = getMermaidPreviews(codeBlock);
-      duplicatePreviews.forEach((preview) => preview.remove());
-
-      const sourceIndex = findMermaidSourceIndex(getCodeBlockText(codeBlock), sources, usedSourceIndexes);
-      if (sourceIndex === -1) {
-        existingPreview?.remove();
-        continue;
-      }
-
-      usedSourceIndexes.add(sourceIndex);
-      const source = sources[sourceIndex];
-      const renderKey = `${currentTheme}:${currentMermaidTheme}:${normalizeMermaidSource(source)}`;
-      const container = existingPreview ?? createMermaidPreview();
-      attachMermaidPreview(codeBlock, container);
-
-      if (container.dataset.renderKey === renderKey && container.childElementCount > 0) {
-        continue;
-      }
-
-      container.dataset.renderKey = renderKey;
-      container.classList.remove("milkj-mermaid-render-error");
-      container.textContent = "Rendering diagram...";
-
-      try {
-        const id = `milkj-mermaid-${Date.now()}-${sourceIndex}-${Math.random()
-          .toString(36)
-          .slice(2)}`;
-        const { svg } = await mermaid.render(id, source);
-        container.innerHTML = svg;
-      } catch (error) {
-        container.classList.add("milkj-mermaid-render-error");
-        container.textContent = error instanceof Error ? error.message : "Unable to render Mermaid diagram.";
-      }
-    }
-  } finally {
-    renderingMermaid = false;
-    installMermaidObserver();
-  }
-}
-
-function installMermaidObserver() {
-  mermaidObserver?.disconnect();
-  mermaidObserver = new MutationObserver((mutations) => {
-    if (renderingMermaid || mutations.every(isMermaidPreviewMutation)) {
-      return;
-    }
-
-    scheduleMermaidRender();
-  });
-  mermaidObserver.observe(root, {
-    childList: true,
-    characterData: true,
-    subtree: true,
-  });
-}
-
-function extractMermaidSources(markdown: string): string[] {
-  const sources: string[] = [];
-  const mermaidFence = /```mermaid[^\n]*\n([\s\S]*?)```/gi;
-  let match: RegExpExecArray | null;
-
-  while ((match = mermaidFence.exec(markdown)) !== null) {
-    sources.push(match[1].trim());
-  }
-
-  return sources;
-}
-
-function findMermaidSourceIndex(
-  codeBlockText: string,
-  sources: string[],
-  usedSourceIndexes: Set<number>,
-): number {
-  const normalizedCodeBlock = normalizeMermaidSource(codeBlockText);
-  const exactMatch = sources.findIndex(
-    (source, index) =>
-      !usedSourceIndexes.has(index) &&
-      normalizeMermaidSource(source) === normalizedCodeBlock,
-  );
-  if (exactMatch !== -1) {
-    return exactMatch;
-  }
-
-  if (!looksLikeMermaidSource(normalizedCodeBlock)) {
-    return -1;
-  }
-
-  return sources.findIndex((_source, index) => !usedSourceIndexes.has(index));
-}
-
-function getCodeBlockText(codeBlock: Element): string {
-  const codeMirrorLines = Array.from(codeBlock.querySelectorAll(".cm-line"));
-  if (codeMirrorLines.length > 0) {
-    return codeMirrorLines.map((line) => line.textContent ?? "").join("\n");
-  }
-
-  const codeMirrorContent = codeBlock.querySelector(".cm-content");
-  if (codeMirrorContent) {
-    return codeMirrorContent.textContent ?? "";
-  }
-
-  return codeBlock.textContent ?? "";
-}
-
-function normalizeMermaidSource(source: string): string {
-  return source.replace(/\r\n/g, "\n").trim();
-}
-
-function looksLikeMermaidSource(source: string): boolean {
-  return /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|stateDiagram-v2|erDiagram|gantt|pie|journey|gitGraph|mindmap|timeline|quadrantChart|xychart-beta|block-beta|C4Context)\b/.test(
-    source,
-  );
 }
 
 function createMermaidStreamParser(): StreamParser<null> {
@@ -323,38 +213,6 @@ function createMermaidStreamParser(): StreamParser<null> {
   };
 }
 
-function createMermaidPreview(): HTMLDivElement {
-  const container = document.createElement("div");
-  container.className = "milkj-mermaid-render";
-  container.contentEditable = "false";
-  container.dataset.milkjTransient = "true";
-  return container;
-}
-
-function getMermaidPreviews(codeBlock: Element): HTMLDivElement[] {
-  return Array.from(codeBlock.querySelectorAll<HTMLDivElement>(".milkj-mermaid-render"));
-}
-
-function attachMermaidPreview(codeBlock: Element, container: HTMLDivElement) {
-  if (container.parentElement === codeBlock) {
-    return;
-  }
-
-  codeBlock.append(container);
-}
-
-function isMermaidPreviewMutation(mutation: MutationRecord): boolean {
-  const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes];
-  return changedNodes.length > 0 && changedNodes.every(isMermaidPreviewNode);
-}
-
-function isMermaidPreviewNode(node: Node): boolean {
-  return node instanceof Element && (
-    node.classList.contains("milkj-mermaid-render") ||
-    node.closest(".milkj-mermaid-render") !== null
-  );
-}
-
 window.milkjSetMarkdown = (markdown: string) => {
   if (markdown === currentMarkdown) {
     return;
@@ -362,22 +220,27 @@ window.milkjSetMarkdown = (markdown: string) => {
   currentMarkdown = markdown;
   if (crepe && editorReady) {
     // Replace content in place: rebuilding Crepe on every external edit would tear down
-    // ProseMirror, the CodeMirror blocks and the Mermaid observer, losing cursor and scroll.
+    // ProseMirror and the CodeMirror blocks, losing cursor and scroll.
     crepe.editor.action(replaceAll(markdown));
     suppressMarkdownEchoes();
-    scheduleMermaidRender();
   } else {
     void createEditor(markdown);
   }
 };
 
 window.milkjApplyConfig = (config: MilkJConfig) => {
+  const mermaidThemeBefore = effectiveMermaidTheme();
   currentTheme = config.theme;
   currentEditorTheme = config.editorTheme;
   currentMermaidTheme = config.mermaidTheme;
   currentReadonly = config.readonly === true;
   crepe?.setReadonly(currentReadonly);
   applyChrome();
+  // Mermaid bakes the theme into each rendered SVG, and previews only re-render when their code
+  // block's content changes — a theme change therefore needs an editor rebuild to refresh them.
+  if (crepe && editorReady && effectiveMermaidTheme() !== mermaidThemeBefore && hasMermaidBlocks(currentMarkdown)) {
+    void createEditor(currentMarkdown);
+  }
 };
 
 function announceReady() {
@@ -595,13 +458,10 @@ style.textContent = `
     min-height: calc(100vh - 40px);
   }
 
+  /* Mermaid diagrams render inside the code-block component's preview panel. */
   .milkj-mermaid-render {
-    margin: 10px 0 18px;
-    padding: 14px;
+    padding: 8px 0;
     overflow-x: auto;
-    border: 1px solid var(--milkj-border);
-    border-radius: 6px;
-    background: var(--crepe-color-surface);
   }
 
   .milkj-mermaid-render svg {
