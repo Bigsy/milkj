@@ -12,9 +12,21 @@
     editor whenever you like.
     ]]></description>
 
-    <!-- Product / plugin compatibility -->
+    <!-- Product / plugin compatibility. No dependency on the bundled Markdown plugin: MilkJ matches
+         files by extension and must keep working when that plugin is disabled. -->
     <depends>com.intellij.modules.platform</depends>
-    <depends>org.intellij.plugins.markdown</depends>
+
+    <change-notes><![CDATA[
+    <b>0.1.4</b>
+    <ul>
+        <li>No more spurious "File Cache Conflict" dialogs: MilkJ no longer writes into the document unless you actually edited in the MilkJ tab.</li>
+        <li>The JCEF browser starts lazily, when the MilkJ tab is first shown — one less browser process per open Markdown file.</li>
+        <li>External edits update the editor in place instead of rebuilding it (cursor and scroll are kept).</li>
+        <li>Edits sync as minimal text ranges — finer undo steps and no caret jumps in the native tab.</li>
+        <li>Read-only files are now read-only in MilkJ too, and a notification appears if a conflicting external change discards an unsynced edit.</li>
+        <li>Works even when the bundled Markdown plugin is disabled.</li>
+    </ul>
+    ]]></change-notes>
 
     <extensions defaultExtensionNs="com.intellij">
         <notificationGroup id="MilkJ" displayType="BALLOON"/>
@@ -32,8 +44,4 @@
         -->
         <fileEditorProvider implementation="com.hedworth.milkj.editor.MilkJEditorProvider"/>
     </extensions>
-
-    <actions>
-        <!-- TODO: actions (e.g. "Open in MilkJ", toggle, insert-table) go here. -->
-    </actions>
 </idea-plugin>

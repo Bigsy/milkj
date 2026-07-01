@@ -33,9 +33,6 @@ dependencies {
             providers.gradleProperty("platformVersion"),
         )
 
-        // The built-in Markdown editor we live alongside (gives us the Markdown FileType + native editor tab).
-        bundledPlugin("org.intellij.plugins.markdown")
-
         pluginVerifier()
         zipSigner()
         testFramework(TestFrameworkType.Platform)
@@ -72,6 +69,12 @@ intellijPlatform {
 
 kotlin {
     jvmToolchain(providers.gradleProperty("javaVersion").get().toInt())
+
+    compilerOptions {
+        // Platform 2024.1 bundles the Kotlin 1.9 stdlib; pinning apiVersion makes 2.x-only stdlib
+        // APIs fail at compile time instead of NoSuchMethodError at runtime on older IDEs.
+        apiVersion = org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_1_9
+    }
 }
 
 val frontendInstall = tasks.register<Exec>("frontendInstall") {
@@ -83,6 +86,9 @@ val frontendInstall = tasks.register<Exec>("frontendInstall") {
     inputs.file("frontend/pnpm-lock.yaml")
     inputs.file("frontend/pnpm-workspace.yaml")
     outputs.dir("frontend/node_modules")
+    // pnpm's node_modules is symlinks into the global store; snapshotting it for the build cache
+    // is fragile (and huge). Up-to-date checks via the outputs still work.
+    outputs.cacheIf { false }
 }
 
 val frontendBuild = tasks.register<Exec>("frontendBuild") {

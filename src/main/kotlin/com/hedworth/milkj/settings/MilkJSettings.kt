@@ -19,14 +19,6 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         settingsState = state
     }
 
-    fun setTheme(theme: ThemeMode) {
-        if (settingsState.theme == theme) {
-            return
-        }
-        settingsState.theme = theme
-        notifyChanged()
-    }
-
     fun update(newState: State) {
         settingsState = newState.copy()
         notifyChanged()
