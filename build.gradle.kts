@@ -37,6 +37,9 @@ dependencies {
         zipSigner()
         testFramework(TestFrameworkType.Platform)
     }
+
+    // BasePlatformTestCase is JUnit3/4-based; the platform test framework doesn't bring JUnit itself.
+    testImplementation("junit:junit:4.13.2")
 }
 
 intellijPlatform {

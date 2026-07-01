@@ -22,6 +22,7 @@ import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
+import org.jetbrains.annotations.TestOnly
 
 /**
  * Two-way bridge between the Milkdown editor (JS, in JCEF) and the IntelliJ document model.
@@ -106,6 +107,12 @@ class MilkJBridge(
 
     override fun dispose() {
         writeDebounce.cancelAllRequests()
+    }
+
+    @TestOnly
+    internal fun drainDebouncesForTest() {
+        writeDebounce.drainRequestsInTest()
+        pushDebounce.drainRequestsInTest()
     }
 
     private fun handlePageMessage(message: String) {
