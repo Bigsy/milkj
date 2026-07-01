@@ -7,6 +7,7 @@ import org.cef.browser.CefFrame
 import org.cef.callback.CefCallback
 import org.cef.callback.CefSchemeHandlerFactory
 import org.cef.handler.CefResourceHandler
+import org.cef.handler.CefResourceHandlerAdapter
 import org.cef.misc.IntRef
 import org.cef.misc.StringRef
 import org.cef.network.CefRequest
@@ -37,7 +38,16 @@ object MilkJWebResources {
         ): CefResourceHandler = MilkJResourceHandler(request?.url)
     }
 
-    private class MilkJResourceHandler(url: String?) : CefResourceHandler {
+    /**
+     * Serves bundled web resources to the JCEF browser.
+     *
+     * We extend [CefResourceHandlerAdapter] rather than implement [CefResourceHandler] directly: at
+     * runtime JCEF (through 2026.x) drives the legacy processRequest/readResponse path, which we
+     * override here. JCEF 2026.2+ also added abstract open/read/skip methods to the interface; the
+     * adapter provides those, so a single build compiled against 2024.1 keeps working — and passes
+     * the Plugin Verifier — across the whole supported range without referencing the newer API types.
+     */
+    private class MilkJResourceHandler(url: String?) : CefResourceHandlerAdapter() {
         private val response: ResourceResponse = ResourceResponse.from(url)
         private var offset = 0
 

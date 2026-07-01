@@ -11,7 +11,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.1.0"
-    id("org.jetbrains.intellij.platform") version "2.1.0"
+    id("org.jetbrains.intellij.platform") version "2.17.0"
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -38,7 +38,6 @@ dependencies {
 
         pluginVerifier()
         zipSigner()
-        instrumentationTools()
         testFramework(TestFrameworkType.Platform)
     }
 }
@@ -49,7 +48,7 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = provider { null } // open-ended forward compatibility
+            untilBuild = provider { null } // open-ended; handler uses the modern JCEF API (262+)
         }
     }
 
@@ -75,7 +74,7 @@ kotlin {
     jvmToolchain(providers.gradleProperty("javaVersion").get().toInt())
 }
 
-val frontendInstall by tasks.registering(Exec::class) {
+val frontendInstall = tasks.register<Exec>("frontendInstall") {
     workingDir = layout.projectDirectory.dir("frontend").asFile
     commandLine("pnpm", "install", "--frozen-lockfile")
     environment("CI", "true")
@@ -86,7 +85,7 @@ val frontendInstall by tasks.registering(Exec::class) {
     outputs.dir("frontend/node_modules")
 }
 
-val frontendBuild by tasks.registering(Exec::class) {
+val frontendBuild = tasks.register<Exec>("frontendBuild") {
     dependsOn(frontendInstall)
     workingDir = layout.projectDirectory.dir("frontend").asFile
     commandLine("pnpm", "run", "build")

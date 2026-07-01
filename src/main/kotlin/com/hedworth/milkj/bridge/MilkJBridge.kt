@@ -11,14 +11,16 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileEvent
-import com.intellij.openapi.vfs.VirtualFileListener
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
-import com.intellij.util.ui.UIUtil
+import com.intellij.ui.JBColor
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -40,7 +42,7 @@ class MilkJBridge(
     private val browser: JBCefBrowser,
 ) : Disposable {
     // JBCefBrowser is a JBCefBrowserBase, which is what JBCefJSQuery.create expects.
-    private val jsToIde: JBCefJSQuery = JBCefJSQuery.create(browser)
+    private val jsToIde: JBCefJSQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val settings: MilkJSettings = MilkJSettings.getInstance()
     private val messageBusConnection: MessageBusConnection =
         ApplicationManager.getApplication().messageBus.connect()
@@ -67,16 +69,16 @@ class MilkJBridge(
             this,
         )
 
-        VirtualFileManager.getInstance().addVirtualFileListener(
-            object : VirtualFileListener {
-                override fun contentsChanged(event: VirtualFileEvent) {
-                    if (event.file.url == file.url) {
+        messageBusConnection.subscribe(
+            VirtualFileManager.VFS_CHANGES,
+            object : BulkFileListener {
+                override fun after(events: List<VFileEvent>) {
+                    if (events.any { it is VFileContentChangeEvent && it.file.url == file.url }) {
                         knownDiskLastModified = diskLastModified()
                         writeDebounce.cancelAllRequests()
                     }
                 }
             },
-            this,
         )
 
         messageBusConnection.subscribe(
@@ -215,7 +217,7 @@ class MilkJBridge(
         val effectiveTheme = when (state.theme) {
             MilkJSettings.ThemeMode.LIGHT -> "light"
             MilkJSettings.ThemeMode.DARK -> "dark"
-            MilkJSettings.ThemeMode.FOLLOW_IDE -> if (UIUtil.isUnderDarcula()) "dark" else "light"
+            MilkJSettings.ThemeMode.FOLLOW_IDE -> if (!JBColor.isBright()) "dark" else "light"
         }
 
         return buildString {
