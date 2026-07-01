@@ -38,6 +38,7 @@ class MilkJBridge(
     private val messageBusConnection: MessageBusConnection =
         ApplicationManager.getApplication().messageBus.connect(this)
     private val writeDebounce = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
+    private val pushDebounce = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var pageReady = false
     private var applyingFromPage = false
     private var knownDiskLastModified = diskLastModified()
@@ -49,8 +50,14 @@ class MilkJBridge(
             object : DocumentListener {
                 override fun documentChanged(event: DocumentEvent) {
                     if (!applyingFromPage && pageReady) {
+                        // The document changed under the page: any pending page->IDE write is stale.
                         writeDebounce.cancelAllRequests()
-                        pushMarkdown(event.document.text)
+                        // Coalesce keystrokes in the native tab into one push to the page.
+                        pushDebounce.cancelAllRequests()
+                        pushDebounce.addRequest(
+                            { pushMarkdown(currentMarkdown()) },
+                            IDE_TO_EDITOR_DEBOUNCE_MS,
+                        )
                     }
                 }
             },
@@ -87,14 +94,21 @@ class MilkJBridge(
     }
 
     private fun handlePageMessage(message: String) {
-        when {
-            message == "ready" -> {
-                pageReady = true
-                pushMarkdown(currentMarkdown())
-                pushConfig()
+        // JCEF delivers page messages on a browser thread; everything below (document text, stamps,
+        // VFS) must be read on the EDT — newer platform builds assert on off-EDT document access.
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || !file.isValid) {
+                return@invokeLater
             }
-            message.startsWith("markdown:") && pageReady -> {
-                scheduleDocumentWrite(message.removePrefix("markdown:"))
+            when {
+                message == "ready" -> {
+                    pageReady = true
+                    pushMarkdown(currentMarkdown())
+                    pushConfig()
+                }
+                message.startsWith("markdown:") && pageReady -> {
+                    scheduleDocumentWrite(message.removePrefix("markdown:"))
+                }
             }
         }
     }
@@ -203,6 +217,7 @@ class MilkJBridge(
 
     companion object {
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
+        private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
     }
 
     private data class WriteBaseline(

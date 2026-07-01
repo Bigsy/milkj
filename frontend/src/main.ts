@@ -6,6 +6,7 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
+import { replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import "@milkdown/crepe/theme/common/style.css";
 
@@ -355,7 +356,15 @@ window.milkjSetMarkdown = (markdown: string) => {
     return;
   }
   currentMarkdown = markdown;
-  void createEditor(markdown);
+  if (crepe && editorReady) {
+    // Replace content in place: rebuilding Crepe on every external edit would tear down
+    // ProseMirror, the CodeMirror blocks and the Mermaid observer, losing cursor and scroll.
+    crepe.editor.action(replaceAll(markdown));
+    suppressMarkdownEchoes();
+    scheduleMermaidRender();
+  } else {
+    void createEditor(markdown);
+  }
 };
 
 window.milkjApplyConfig = (config: MilkJConfig) => {
