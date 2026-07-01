@@ -1,6 +1,8 @@
 package com.hedworth.milkj.bridge
 
 import com.hedworth.milkj.settings.MilkJSettings
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.Disposable
@@ -16,6 +18,7 @@ import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.newvfs.BulkFileListener
 import com.intellij.openapi.vfs.newvfs.events.VFileContentChangeEvent
 import com.intellij.openapi.vfs.newvfs.events.VFileEvent
+import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
@@ -43,6 +46,9 @@ class MilkJBridge(
     private var pageReady = false
     private var applyingFromPage = false
     private var knownDiskLastModified = diskLastModified()
+
+    // One notification per conflict burst: reset whenever the page receives fresh content again.
+    private var conflictNotified = false
 
     fun install() {
         connection.connect { message -> handlePageMessage(message) }
@@ -72,6 +78,14 @@ class MilkJBridge(
                     if (events.any { it is VFileContentChangeEvent && it.file.url == file.url }) {
                         knownDiskLastModified = diskLastModified()
                         writeDebounce.cancelAllRequests()
+                    }
+                    val writabilityChanged = events.any {
+                        it is VFilePropertyChangeEvent &&
+                            it.file.url == file.url &&
+                            it.propertyName == VirtualFile.PROP_WRITABLE
+                    }
+                    if (writabilityChanged && pageReady) {
+                        pushConfig()
                     }
                 }
             },
@@ -117,6 +131,7 @@ class MilkJBridge(
     private fun scheduleDocumentWrite(markdown: String) {
         if (hasUnseenDiskChange()) {
             file.refresh(false, false)
+            notifyPageEditDropped()
             return
         }
 
@@ -148,6 +163,7 @@ class MilkJBridge(
             hasUnseenDiskChange()
         ) {
             file.refresh(false, false)
+            notifyPageEditDropped()
             return
         }
         if (document.text == markdown) {
@@ -194,11 +210,28 @@ class MilkJBridge(
     }
 
     private fun pushMarkdown(markdown: String) {
+        conflictNotified = false
         executeJavaScript("window.milkjSetMarkdown?.(${markdown.toJsonString()});")
     }
 
     private fun pushConfig() {
-        executeJavaScript("window.milkjApplyConfig?.(${settings.toFrontendConfigJson()});")
+        val configJson = frontendConfigJson(settings.state, readonly = !file.isWritable)
+        executeJavaScript("window.milkjApplyConfig?.($configJson);")
+    }
+
+    private fun notifyPageEditDropped() {
+        if (conflictNotified) {
+            return
+        }
+        conflictNotified = true
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("MilkJ")
+            .createNotification(
+                "File changed outside MilkJ",
+                "\"${file.name}\" changed outside the MilkJ editor. MilkJ reloaded the new content and discarded its latest unsynced edit.",
+                NotificationType.WARNING,
+            )
+            .notify(project)
     }
 
     private fun currentMarkdown(): String {
@@ -219,31 +252,32 @@ class MilkJBridge(
     private fun diskLastModified(): Long =
         runCatching { VfsUtilCore.virtualToIoFile(file).lastModified() }.getOrDefault(0L)
 
-    private fun MilkJSettings.toFrontendConfigJson(): String {
-        val effectiveTheme = when (state.theme) {
-            MilkJSettings.ThemeMode.LIGHT -> "light"
-            MilkJSettings.ThemeMode.DARK -> "dark"
-            MilkJSettings.ThemeMode.FOLLOW_IDE -> if (!JBColor.isBright()) "dark" else "light"
-        }
-
-        return buildString {
-            append("{")
-            append("\"theme\":").append(effectiveTheme.toJsonString()).append(",")
-            append("\"configuredTheme\":").append(state.theme.name.toJsonString()).append(",")
-            append("\"editorTheme\":").append(state.editorTheme.name.toJsonString()).append(",")
-            append("\"mermaidTheme\":").append(state.mermaidTheme.name.toJsonString()).append(",")
-            append("\"defaultEditor\":").append(state.defaultEditor.name.toJsonString()).append(",")
-            append("\"placeholder\":").append(state.placeholderText.toJsonString())
-            append("}")
-        }
-    }
-
-    private fun String.toJsonString(): String =
-        "\"" + StringUtil.escapeStringCharacters(this) + "\""
-
     companion object {
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
+
+        internal fun frontendConfigJson(state: MilkJSettings.State, readonly: Boolean): String {
+            val effectiveTheme = when (state.theme) {
+                MilkJSettings.ThemeMode.LIGHT -> "light"
+                MilkJSettings.ThemeMode.DARK -> "dark"
+                MilkJSettings.ThemeMode.FOLLOW_IDE -> if (!JBColor.isBright()) "dark" else "light"
+            }
+
+            return buildString {
+                append("{")
+                append("\"theme\":").append(effectiveTheme.toJsonString()).append(",")
+                append("\"configuredTheme\":").append(state.theme.name.toJsonString()).append(",")
+                append("\"editorTheme\":").append(state.editorTheme.name.toJsonString()).append(",")
+                append("\"mermaidTheme\":").append(state.mermaidTheme.name.toJsonString()).append(",")
+                append("\"defaultEditor\":").append(state.defaultEditor.name.toJsonString()).append(",")
+                append("\"placeholder\":").append(state.placeholderText.toJsonString()).append(",")
+                append("\"readonly\":").append(readonly)
+                append("}")
+            }
+        }
+
+        private fun String.toJsonString(): String =
+            "\"" + StringUtil.escapeStringCharacters(this) + "\""
     }
 
     private data class WriteBaseline(

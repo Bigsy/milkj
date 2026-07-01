@@ -41,6 +41,8 @@ interface MilkJConfig {
   mermaidTheme: MilkJMermaidTheme;
   defaultEditor: "BUILT_IN" | "MILKJ";
   placeholder: string;
+  // True when the file is not writable in the IDE; the editor surface must not accept edits.
+  readonly?: boolean;
 }
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -61,6 +63,7 @@ let currentMarkdown = "";
 let currentTheme: MilkJTheme = "light";
 let currentEditorTheme: MilkJEditorTheme = "NORD";
 let currentMermaidTheme: MilkJMermaidTheme = "AUTO";
+let currentReadonly = false;
 let crepe: Crepe | undefined;
 let editorReady = false;
 let readySent = false;
@@ -106,6 +109,7 @@ async function createEditor(markdown: string) {
     },
   });
   await crepe.create();
+  crepe.setReadonly(currentReadonly);
   crepe.on((listener) => {
     listener.markdownUpdated((_ctx, markdown) => {
       currentMarkdown = markdown;
@@ -371,6 +375,8 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
   currentTheme = config.theme;
   currentEditorTheme = config.editorTheme;
   currentMermaidTheme = config.mermaidTheme;
+  currentReadonly = config.readonly === true;
+  crepe?.setReadonly(currentReadonly);
   applyChrome();
 };
 

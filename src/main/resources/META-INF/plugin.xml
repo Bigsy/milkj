@@ -17,6 +17,7 @@
     <depends>org.intellij.plugins.markdown</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="MilkJ" displayType="BALLOON"/>
         <applicationService serviceImplementation="com.hedworth.milkj.settings.MilkJSettings"/>
         <applicationConfigurable
                 parentId="tools"
