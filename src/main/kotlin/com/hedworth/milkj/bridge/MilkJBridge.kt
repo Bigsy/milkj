@@ -1,7 +1,6 @@
 package com.hedworth.milkj.bridge
 
 import com.hedworth.milkj.settings.MilkJSettings
-import com.hedworth.milkj.web.MilkJWebResources
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.Disposable
@@ -19,43 +18,32 @@ import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
-import com.intellij.ui.jcef.JBCefBrowser
-import com.intellij.ui.jcef.JBCefBrowserBase
-import com.intellij.ui.jcef.JBCefJSQuery
-import org.cef.browser.CefBrowser
-import org.cef.browser.CefFrame
-import org.cef.handler.CefLoadHandlerAdapter
 
 /**
  * Two-way bridge between the Milkdown editor (JS, in JCEF) and the IntelliJ document model.
  *
- * Skeleton only. Intended responsibilities:
- *  - JS -> IDE: a [JBCefJSQuery] the page calls on every Milkdown change; the handler writes the new
- *    Markdown into the file's `Document` (inside a write command), so undo/redo/save flow normally.
+ *  - JS -> IDE: the page calls `window.milkjSendToIde` on every Milkdown change; the handler writes
+ *    the new Markdown into the file's `Document` (inside a write command), so undo/redo/save flow
+ *    normally.
  *  - IDE -> JS: a `DocumentListener` that, on external edits (e.g. edits made in the native Markdown
- *    tab), pushes the updated Markdown back into Milkdown via `browser.cefBrowser.executeJavaScript`.
+ *    tab), pushes the updated Markdown back into Milkdown via [MilkJBrowserConnection.executeJavaScript].
  *  - Debounce + loop-guard so the two directions don't fight each other.
  */
 class MilkJBridge(
     private val project: Project,
     private val file: VirtualFile,
-    private val browser: JBCefBrowser,
+    private val connection: MilkJBrowserConnection,
 ) : Disposable {
-    // JBCefBrowser is a JBCefBrowserBase, which is what JBCefJSQuery.create expects.
-    private val jsToIde: JBCefJSQuery = JBCefJSQuery.create(browser as JBCefBrowserBase)
     private val settings: MilkJSettings = MilkJSettings.getInstance()
     private val messageBusConnection: MessageBusConnection =
-        ApplicationManager.getApplication().messageBus.connect()
+        ApplicationManager.getApplication().messageBus.connect(this)
     private val writeDebounce = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var pageReady = false
     private var applyingFromPage = false
     private var knownDiskLastModified = diskLastModified()
 
     fun install() {
-        jsToIde.addHandler { message ->
-            handlePageMessage(message)
-            null
-        }
+        connection.connect { message -> handlePageMessage(message) }
 
         FileDocumentManager.getInstance().getDocument(file)?.addDocumentListener(
             object : DocumentListener {
@@ -92,32 +80,10 @@ class MilkJBridge(
             },
         )
 
-        browser.jbCefClient.addLoadHandler(
-            object : CefLoadHandlerAdapter() {
-                override fun onLoadEnd(cefBrowser: CefBrowser?, frame: CefFrame?, httpStatusCode: Int) {
-                    if (frame?.isMain == true) {
-                        installJavaScriptBridge()
-                    }
-                }
-            },
-            browser.cefBrowser,
-        )
     }
 
     override fun dispose() {
         writeDebounce.cancelAllRequests()
-        messageBusConnection.disconnect()
-        jsToIde.dispose()
-    }
-
-    private fun installJavaScriptBridge() {
-        val script = """
-            window.milkjSendToIde = function (payload) {
-              ${jsToIde.inject("payload")}
-            };
-            window.milkjBridgeInstalled?.();
-        """.trimIndent()
-        executeJavaScript(script)
     }
 
     private fun handlePageMessage(message: String) {
@@ -204,7 +170,7 @@ class MilkJBridge(
     }
 
     private fun executeJavaScript(script: String) {
-        browser.cefBrowser.executeJavaScript(script, MilkJWebResources.indexUrl, 0)
+        connection.executeJavaScript(script)
     }
 
     private fun hasUnseenDiskChange(): Boolean =

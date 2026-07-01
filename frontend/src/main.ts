@@ -67,6 +67,29 @@ let mermaidRenderEpoch = 0;
 let mermaidObserver: MutationObserver | undefined;
 let renderingMermaid = false;
 
+// Milkdown's listener plugin fires markdownUpdated ~200ms (debounced) after ANY doc-changing
+// transaction — including Crepe's own init/normalization transactions and content the IDE just
+// pushed in. Those echoes must never reach the IDE: the Crepe-normalized markdown usually differs
+// from the text on disk (bullet style, escaping, spacing), so writing it into the Document would
+// dirty it without any user edit and trigger spurious "File Cache Conflict" dialogs.
+//
+// A boolean flag can't model this: the echo arrives after the apply returns (debounce), and an
+// apply that leaves the doc unchanged fires no echo at all, which would strand the flag. Instead,
+// echoes are suppressed for a time window after every IDE-driven apply; any direct user
+// interaction lifts the suppression immediately so real edits are never swallowed.
+const ECHO_SUPPRESS_MS = 500;
+let suppressEchoUntil = 0;
+
+function suppressMarkdownEchoes() {
+  suppressEchoUntil = performance.now() + ECHO_SUPPRESS_MS;
+}
+
+for (const type of ["keydown", "pointerdown", "paste", "cut", "drop"]) {
+  root.addEventListener(type, () => {
+    suppressEchoUntil = 0;
+  }, { capture: true });
+}
+
 applyChrome();
 
 async function createEditor(markdown: string) {
@@ -85,10 +108,13 @@ async function createEditor(markdown: string) {
   crepe.on((listener) => {
     listener.markdownUpdated((_ctx, markdown) => {
       currentMarkdown = markdown;
-      window.milkjSendToIde?.(`markdown:${markdown}`);
+      if (performance.now() >= suppressEchoUntil) {
+        window.milkjSendToIde?.(`markdown:${markdown}`);
+      }
       scheduleMermaidRender();
     });
   });
+  suppressMarkdownEchoes();
   installMermaidObserver();
   scheduleMermaidRender();
 }

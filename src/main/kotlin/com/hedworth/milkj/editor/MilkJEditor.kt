@@ -1,51 +1,79 @@
 package com.hedworth.milkj.editor
 
+import com.hedworth.milkj.bridge.JcefBrowserConnection
 import com.hedworth.milkj.bridge.MilkJBridge
 import com.hedworth.milkj.web.MilkJWebResources
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBuilder
+import java.awt.BorderLayout
+import java.awt.event.HierarchyEvent
+import java.awt.event.HierarchyListener
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLabel
+import javax.swing.JPanel
 
 /**
  * A WYSIWYG Markdown [FileEditor] backed by Milkdown running inside an embedded JCEF browser.
  *
- * Skeleton only — the real implementation needs to:
- *  1. Load the bundled Milkdown app from resources (`/web/index.html`) into the JCEF browser.
- *  2. Push the file's current Markdown into Milkdown on load.
- *  3. Sync edits both ways via [MilkJBridge] (JS -> Document on change; Document -> JS on external edits).
- *  4. Handle disposal, theming (sync IDE theme/LAF into the page), and JCEF-unavailable fallback.
+ * The browser (and the [MilkJBridge] that can write into the file's Document) is created lazily,
+ * the first time the MilkJ tab is actually shown: IntelliJ instantiates every accepted provider's
+ * editor when a file is opened, not when its tab is first selected, so eager creation would spawn
+ * a JCEF process — and let Crepe's markdown normalization dirty the Document — for every opened
+ * Markdown file even if the user never selects the MilkJ tab.
  */
 class MilkJEditor(
     private val project: Project,
     private val file: VirtualFile,
 ) : UserDataHolderBase(), FileEditor {
 
-    private val browser: JBCefBrowser? =
-        if (JBCefApp.isSupported()) JBCefBrowser() else null
-
-    private val bridge: MilkJBridge? =
-        browser?.let { MilkJBridge(project, file, it) }
-
-    // Fallback shown when JCEF isn't available in the running IDE.
-    private val fallback: JComponent =
-        JLabel("MilkJ requires JCEF, which isn't available in this IDE.")
+    private val panel = JPanel(BorderLayout())
+    private var browser: JBCefBrowser? = null
 
     init {
-        browser?.let {
-            MilkJWebResources.registerSchemeHandler()
-            bridge?.install()
-            it.loadURL(MilkJWebResources.indexUrl)
+        if (JBCefApp.isSupported()) {
+            panel.addHierarchyListener(object : HierarchyListener {
+                override fun hierarchyChanged(event: HierarchyEvent) {
+                    if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L && panel.isShowing) {
+                        panel.removeHierarchyListener(this)
+                        initializeBrowser()
+                    }
+                }
+            })
+        } else {
+            // Fallback if this editor is ever constructed without JCEF (the provider normally
+            // refuses such files up front).
+            panel.add(JLabel("MilkJ requires JCEF, which isn't available in this IDE."), BorderLayout.CENTER)
         }
     }
 
-    override fun getComponent(): JComponent = browser?.component ?: fallback
+    private fun initializeBrowser() {
+        val newBrowser = JBCefBrowserBuilder().build()
+        Disposer.register(this, newBrowser)
+        browser = newBrowser
+
+        MilkJWebResources.registerSchemeHandler()
+
+        val connection = JcefBrowserConnection(newBrowser)
+        Disposer.register(this, connection)
+        val bridge = MilkJBridge(project, file, connection)
+        Disposer.register(this, bridge)
+        bridge.install()
+
+        newBrowser.loadURL(MilkJWebResources.indexUrl)
+        panel.add(newBrowser.component, BorderLayout.CENTER)
+        panel.revalidate()
+        panel.repaint()
+    }
+
+    override fun getComponent(): JComponent = panel
 
     override fun getPreferredFocusedComponent(): JComponent? = browser?.component
 
@@ -62,8 +90,5 @@ class MilkJEditor(
     override fun addPropertyChangeListener(listener: PropertyChangeListener) {}
     override fun removePropertyChangeListener(listener: PropertyChangeListener) {}
 
-    override fun dispose() {
-        bridge?.dispose()
-        browser?.let { com.intellij.openapi.util.Disposer.dispose(it) }
-    }
+    override fun dispose() { /* browser, connection and bridge are registered with Disposer */ }
 }
