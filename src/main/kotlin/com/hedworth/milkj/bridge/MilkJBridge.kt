@@ -4,6 +4,7 @@ import com.hedworth.milkj.settings.MilkJSettings
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -160,11 +161,36 @@ class MilkJBridge(
             .run<RuntimeException> {
                 applyingFromPage = true
                 try {
-                    document.setText(markdown)
+                    replaceChangedRange(document, markdown)
                 } finally {
                     applyingFromPage = false
                 }
             }
+    }
+
+    /**
+     * Replaces only the changed region (common prefix/suffix trimmed) instead of the whole file:
+     * whole-file setText made every WYSIWYG edit a full replacement — coarse undo, caret jumps in
+     * the native tab, and needlessly large modified ranges.
+     */
+    private fun replaceChangedRange(document: Document, markdown: String) {
+        val oldText = document.charsSequence
+        val oldLength = oldText.length
+        val newLength = markdown.length
+
+        var prefix = 0
+        val maxPrefix = minOf(oldLength, newLength)
+        while (prefix < maxPrefix && oldText[prefix] == markdown[prefix]) {
+            prefix++
+        }
+
+        var suffix = 0
+        val maxSuffix = minOf(oldLength, newLength) - prefix
+        while (suffix < maxSuffix && oldText[oldLength - 1 - suffix] == markdown[newLength - 1 - suffix]) {
+            suffix++
+        }
+
+        document.replaceString(prefix, oldLength - suffix, markdown.substring(prefix, newLength - suffix))
     }
 
     private fun pushMarkdown(markdown: String) {
