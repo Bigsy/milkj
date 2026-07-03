@@ -61,12 +61,14 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         sendFromPage("ready")
 
         assertFalse("page-ready alone must never leave unsaved document changes", isDocumentUnsaved())
-        val markdownPush = connection.executedScripts.singleOrNull { it.startsWith("window.milkjSetMarkdown") }
-        assertNotNull("ready should push the document text to the page", markdownPush)
-        assertTrue(markdownPush!!.contains("* item one"))
+        val markdownIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetMarkdown") }
+        val configIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjApplyConfig") }
+        assertTrue("ready should push the document text to the page", markdownIndex >= 0)
+        assertTrue(connection.executedScripts[markdownIndex].contains("* item one"))
+        assertTrue("ready should push the frontend config", configIndex >= 0)
         assertTrue(
-            "ready should push the frontend config",
-            connection.executedScripts.any { it.startsWith("window.milkjApplyConfig") },
+            "config must be pushed before content so the page sets up the editor before it lands",
+            configIndex < markdownIndex,
         )
     }
 

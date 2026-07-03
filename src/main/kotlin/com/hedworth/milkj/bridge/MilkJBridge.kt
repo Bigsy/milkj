@@ -125,8 +125,10 @@ class MilkJBridge(
             when {
                 message == "ready" -> {
                     pageReady = true
-                    pushMarkdown(currentMarkdown())
+                    // Config first: the page applies theme/placeholder/readonly before the content
+                    // lands, so a config-driven editor rebuild happens while it's still empty.
                     pushConfig()
+                    pushMarkdown(currentMarkdown())
                 }
                 message.startsWith("markdown:") && pageReady -> {
                     scheduleDocumentWrite(message.removePrefix("markdown:"))

@@ -4,7 +4,7 @@
     <vendor url="https://github.com/Bigsy">Bill Hedworth</vendor>
 
     <description><![CDATA[
-    A WYSIWYG Markdown editor for JetBrains IDEs, powered by <a href="https://milkdown.dev">Milkdown</a>.
+    A WYSIWYG Markdown editor for JetBrains IDEs, powered by <a href="https://milkdown.dev">Milkdown</a>. Ideal for agentic AI md PLAN editing workflows.
     <br/><br/>
     MilkJ adds a rich "what you see is what you get" editing surface for Markdown files, rendered with
     Milkdown inside an embedded JCEF browser. It appears as an editor tab right next to IntelliJ's
@@ -43,5 +43,7 @@
           adds "MilkJ" as a switchable tab beside it (tweak the policy in the provider).
         -->
         <fileEditorProvider implementation="com.hedworth.milkj.editor.MilkJEditorProvider"/>
+        <!-- "Shortcuts" reference tab; hidden via the checkbox in Settings | Tools | MilkJ. -->
+        <fileEditorProvider implementation="com.hedworth.milkj.editor.MilkJShortcutsEditorProvider"/>
     </extensions>
 </idea-plugin>

@@ -17,7 +17,8 @@
     "@milkdown/crepe": "7.21.2",
     "@milkdown/kit": "7.21.2",
     "@milkdown/theme-nord": "7.21.2",
-    "mermaid": "11.16.0"
+    "mermaid": "11.16.0",
+    "prosemirror-search": "^1.1.1"
   },
   "devDependencies": {
     "typescript": "^5.5.0",

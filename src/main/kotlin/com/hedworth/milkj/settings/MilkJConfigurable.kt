@@ -1,6 +1,7 @@
 package com.hedworth.milkj.settings
 
 import com.intellij.openapi.options.Configurable
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import java.awt.GridBagConstraints
@@ -18,6 +19,7 @@ class MilkJConfigurable : Configurable {
     private var mermaidThemeCombo: JComboBox<MilkJSettings.MermaidTheme>? = null
     private var defaultEditorCombo: JComboBox<MilkJSettings.DefaultEditorMode>? = null
     private var placeholderField: JBTextField? = null
+    private var showShortcutsTabCheckBox: JBCheckBox? = null
 
     override fun getDisplayName(): String = "MilkJ"
 
@@ -30,12 +32,14 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo = JComboBox(MilkJSettings.MermaidTheme.entries.toTypedArray())
         defaultEditorCombo = JComboBox(MilkJSettings.DefaultEditorMode.entries.toTypedArray())
         placeholderField = JBTextField()
+        showShortcutsTabCheckBox = JBCheckBox("Show the Shortcuts reference tab for Markdown files")
 
         createdPanel.addRow(0, "Theme mode:", themeCombo!!)
         createdPanel.addRow(1, "Editor theme:", editorThemeCombo!!)
         createdPanel.addRow(2, "Mermaid theme:", mermaidThemeCombo!!)
         createdPanel.addRow(3, "Default editor for Markdown:", defaultEditorCombo!!)
         createdPanel.addRow(4, "Placeholder text:", placeholderField!!)
+        createdPanel.addRow(5, "", showShortcutsTabCheckBox!!)
         reset()
         return createdPanel
     }
@@ -46,7 +50,8 @@ class MilkJConfigurable : Configurable {
             editorThemeCombo?.selectedItem != state.editorTheme ||
             mermaidThemeCombo?.selectedItem != state.mermaidTheme ||
             defaultEditorCombo?.selectedItem != state.defaultEditor ||
-            placeholderField?.text != state.placeholderText
+            placeholderField?.text != state.placeholderText ||
+            showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab
     }
 
     override fun apply() {
@@ -60,6 +65,7 @@ class MilkJConfigurable : Configurable {
                 it.defaultEditor =
                     defaultEditorCombo?.selectedItem as MilkJSettings.DefaultEditorMode
                 it.placeholderText = placeholderField?.text.orEmpty()
+                it.showShortcutsTab = showShortcutsTabCheckBox?.isSelected ?: true
             },
         )
     }
@@ -71,6 +77,7 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo?.selectedItem = state.mermaidTheme
         defaultEditorCombo?.selectedItem = state.defaultEditor
         placeholderField?.text = state.placeholderText
+        showShortcutsTabCheckBox?.isSelected = state.showShortcutsTab
     }
 
     override fun disposeUIResources() {
@@ -80,6 +87,7 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo = null
         defaultEditorCombo = null
         placeholderField = null
+        showShortcutsTabCheckBox = null
     }
 
     private fun JPanel.addRow(row: Int, label: String, component: JComponent) {

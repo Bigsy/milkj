@@ -37,6 +37,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var mermaidTheme: MermaidTheme = MermaidTheme.AUTO
         var defaultEditor: DefaultEditorMode = DefaultEditorMode.BUILT_IN
         var placeholderText: String = "Start writing..."
+        var showShortcutsTab: Boolean = true
 
         fun copy(): State =
             State().also {
@@ -45,6 +46,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.mermaidTheme = mermaidTheme
                 it.defaultEditor = defaultEditor
                 it.placeholderText = placeholderText
+                it.showShortcutsTab = showShortcutsTab
             }
     }
 

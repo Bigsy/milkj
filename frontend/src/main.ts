@@ -6,8 +6,11 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
-import { replaceAll } from "@milkdown/kit/utils";
+import { editorViewCtx } from "@milkdown/kit/core";
+import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
+import { search } from "prosemirror-search";
+import { installFindBar } from "./findbar";
 import "@milkdown/crepe/theme/common/style.css";
 
 // MilkJ frontend entry point.
@@ -63,9 +66,13 @@ let currentMarkdown = "";
 let currentTheme: MilkJTheme = "light";
 let currentEditorTheme: MilkJEditorTheme = "NORD";
 let currentMermaidTheme: MilkJMermaidTheme = "AUTO";
+// Empty until the IDE pushes its config (which happens before the content), so the pre-config
+// editor never flashes Crepe's built-in "Please enter..." text.
+let currentPlaceholder = "";
 let currentReadonly = false;
 let crepe: Crepe | undefined;
 let editorReady = false;
+let creatingEditor = false;
 let readySent = false;
 let mermaidRenderSeq = 0;
 
@@ -94,40 +101,76 @@ for (const type of ["keydown", "pointerdown", "paste", "cut", "drop"]) {
 
 applyChrome();
 
-async function createEditor(markdown: string) {
-  await crepe?.destroy().catch(() => undefined);
-  root.replaceChildren();
-  crepe = new Crepe({
-    root,
-    defaultValue: markdown,
-    featureConfigs: {
-      [CrepeFeature.CodeMirror]: {
-        languages: milkjCodeLanguages,
-        // Renders Mermaid fences through the code-block component's preview panel: the component
-        // re-invokes this whenever the block's content or language changes, and sanitizes the
-        // result (Mermaid's SVG/foreignObject included) before inserting it.
-        renderPreview: (language, content, applyPreview) => {
-          if (!/^(mermaid|mmd)$/i.test(language) || !content.trim()) {
-            return null;
-          }
-          void renderMermaidPreview(content, applyPreview);
-          // Returning undefined marks the preview as async; the component shows its loading
-          // placeholder until applyPreview delivers the diagram.
+// Cmd/Ctrl+F find bar. Created once; each (re)built editor registers the prosemirror-search
+// plugin, and syncToView re-applies any active query to the fresh plugin state.
+const findBar = installFindBar({
+  getView: () => {
+    if (!crepe || creatingEditor) {
+      return undefined;
+    }
+    try {
+      return crepe.editor.ctx.get(editorViewCtx);
+    } catch {
+      return undefined;
+    }
+  },
+  // A replace is a real user edit: it must reach the IDE even inside the echo window.
+  onUserEdit: () => {
+    suppressEchoUntil = 0;
+  },
+});
+
+async function createEditor() {
+  const markdown = currentMarkdown;
+  creatingEditor = true;
+  try {
+    await crepe?.destroy().catch(() => undefined);
+    root.replaceChildren();
+    crepe = new Crepe({
+      root,
+      defaultValue: markdown,
+      featureConfigs: {
+        [CrepeFeature.Placeholder]: {
+          text: currentPlaceholder,
+          mode: "block",
+        },
+        [CrepeFeature.CodeMirror]: {
+          languages: milkjCodeLanguages,
+          // Renders Mermaid fences through the code-block component's preview panel: the component
+          // re-invokes this whenever the block's content or language changes, and sanitizes the
+          // result (Mermaid's SVG/foreignObject included) before inserting it.
+          renderPreview: (language, content, applyPreview) => {
+            if (!/^(mermaid|mmd)$/i.test(language) || !content.trim()) {
+              return null;
+            }
+            void renderMermaidPreview(content, applyPreview);
+            // Returning undefined marks the preview as async; the component shows its loading
+            // placeholder until applyPreview delivers the diagram.
+          },
         },
       },
-    },
-  });
-  await crepe.create();
-  crepe.setReadonly(currentReadonly);
-  crepe.on((listener) => {
-    listener.markdownUpdated((_ctx, markdown) => {
-      currentMarkdown = markdown;
-      if (performance.now() >= suppressEchoUntil) {
-        window.milkjSendToIde?.(`markdown:${markdown}`);
-      }
     });
-  });
-  suppressMarkdownEchoes();
+    crepe.editor.use($prose(() => search()));
+    await crepe.create();
+    crepe.setReadonly(currentReadonly);
+    crepe.on((listener) => {
+      listener.markdownUpdated((_ctx, markdown) => {
+        currentMarkdown = markdown;
+        if (performance.now() >= suppressEchoUntil) {
+          window.milkjSendToIde?.(`markdown:${markdown}`);
+        }
+        findBar.refresh();
+      });
+    });
+    // Content the IDE pushed while the editor was being (re)built.
+    if (currentMarkdown !== markdown) {
+      crepe.editor.action(replaceAll(currentMarkdown));
+    }
+    suppressMarkdownEchoes();
+  } finally {
+    creatingEditor = false;
+  }
+  findBar.syncToView();
 }
 
 async function renderMermaidPreview(
@@ -218,28 +261,41 @@ window.milkjSetMarkdown = (markdown: string) => {
     return;
   }
   currentMarkdown = markdown;
+  if (creatingEditor) {
+    // A rebuild is in flight; acting on the half-created editor would throw. createEditor
+    // applies the latest currentMarkdown once the new editor exists.
+    return;
+  }
   if (crepe && editorReady) {
     // Replace content in place: rebuilding Crepe on every external edit would tear down
     // ProseMirror and the CodeMirror blocks, losing cursor and scroll.
     crepe.editor.action(replaceAll(markdown));
     suppressMarkdownEchoes();
   } else {
-    void createEditor(markdown);
+    void createEditor();
   }
 };
 
 window.milkjApplyConfig = (config: MilkJConfig) => {
   const mermaidThemeBefore = effectiveMermaidTheme();
+  const placeholderBefore = currentPlaceholder;
   currentTheme = config.theme;
   currentEditorTheme = config.editorTheme;
   currentMermaidTheme = config.mermaidTheme;
+  currentPlaceholder = config.placeholder;
   currentReadonly = config.readonly === true;
   crepe?.setReadonly(currentReadonly);
+  findBar.setReadonly(currentReadonly);
   applyChrome();
-  // Mermaid bakes the theme into each rendered SVG, and previews only re-render when their code
-  // block's content changes — a theme change therefore needs an editor rebuild to refresh them.
-  if (crepe && editorReady && effectiveMermaidTheme() !== mermaidThemeBefore && hasMermaidBlocks(currentMarkdown)) {
-    void createEditor(currentMarkdown);
+  // The placeholder is baked into the editor at creation, and Mermaid bakes its theme into each
+  // rendered SVG (previews only re-render when their code block's content changes) — either
+  // change needs an editor rebuild to take effect. The IDE pushes config before content, so the
+  // initial placeholder rebuild happens while the editor is still empty.
+  const needsRebuild =
+    currentPlaceholder !== placeholderBefore ||
+    (effectiveMermaidTheme() !== mermaidThemeBefore && hasMermaidBlocks(currentMarkdown));
+  if (needsRebuild && crepe && editorReady && !creatingEditor) {
+    void createEditor();
   }
 };
 
@@ -258,7 +314,7 @@ function announceReady() {
 
 window.milkjBridgeInstalled = announceReady;
 
-void createEditor(currentMarkdown).then(() => {
+void createEditor().then(() => {
   editorReady = true;
   announceReady();
 });
