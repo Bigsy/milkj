@@ -7,7 +7,6 @@ import com.intellij.openapi.fileEditor.FileEditorProvider
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.jcef.JBCefApp
 
 /**
  * Contributes the Milkdown WYSIWYG editor as an additional editor tab for Markdown files.
@@ -21,7 +20,7 @@ class MilkJEditorProvider : FileEditorProvider, DumbAware {
 
     override fun accept(project: Project, file: VirtualFile): Boolean {
         // Without JCEF the editor would just be a dead tab with a fallback label — hide it entirely.
-        return file.extension?.lowercase() in MARKDOWN_EXTENSIONS && JBCefApp.isSupported()
+        return file.extension?.lowercase() in MARKDOWN_EXTENSIONS && JcefSupport.isAvailable()
     }
 
     override fun createEditor(project: Project, file: VirtualFile): FileEditor =

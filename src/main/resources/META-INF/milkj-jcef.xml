@@ -1,0 +1,5 @@
+<!-- Intentionally empty: the optional dependency on com.intellij.modules.jcef exists purely for
+     classloader visibility of the JCEF classes on 2025.3.1+ builds where they moved out of the
+     core platform into the "Web Browser (JCEF)" plugin. -->
+<idea-plugin>
+</idea-plugin>

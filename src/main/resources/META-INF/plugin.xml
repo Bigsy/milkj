@@ -15,16 +15,23 @@
     <!-- Product / plugin compatibility. No dependency on the bundled Markdown plugin: MilkJ matches
          files by extension and must keep working when that plugin is disabled. -->
     <depends>com.intellij.modules.platform</depends>
+    <!-- Since 2026.2 (262) the JCEF classes live in the separate bundled "Web Browser (JCEF)"
+         plugin; without this dependency the MilkJ classloader can't see JBCefApp there. The alias
+         only exists from 2025.3.1, so it must stay optional to keep loading on 2024.1+, where JCEF
+         is part of the core platform. -->
+    <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
-    <b>0.1.4</b>
+    <b>0.1.7</b>
     <ul>
         <li>No more spurious "File Cache Conflict" dialogs: MilkJ no longer writes into the document unless you actually edited in the MilkJ tab.</li>
-        <li>The JCEF browser starts lazily, when the MilkJ tab is first shown — one less browser process per open Markdown file.</li>
         <li>External edits update the editor in place instead of rebuilding it (cursor and scroll are kept).</li>
         <li>Edits sync as minimal text ranges — finer undo steps and no caret jumps in the native tab.</li>
         <li>Read-only files are now read-only in MilkJ too, and a notification appears if a conflicting external change discards an unsynced edit.</li>
         <li>Works even when the bundled Markdown plugin is disabled.</li>
+        <li>New "Shortcuts" reference tab next to the MilkJ editor (can be hidden in Settings | Tools | MilkJ).</li>
+        <li>Mermaid diagrams render through the code-block preview panel.</li>
+        <li>Compatible with 2026.2 EAP, where JCEF moved into the separate "Web Browser (JCEF)" plugin.</li>
     </ul>
     ]]></change-notes>
 

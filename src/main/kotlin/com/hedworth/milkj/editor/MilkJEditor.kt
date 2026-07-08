@@ -9,12 +9,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBuilder
 import java.awt.BorderLayout
-import java.awt.event.HierarchyEvent
-import java.awt.event.HierarchyListener
 import java.beans.PropertyChangeListener
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -23,11 +20,16 @@ import javax.swing.JPanel
 /**
  * A WYSIWYG Markdown [FileEditor] backed by Milkdown running inside an embedded JCEF browser.
  *
- * The browser (and the [MilkJBridge] that can write into the file's Document) is created lazily,
- * the first time the MilkJ tab is actually shown: IntelliJ instantiates every accepted provider's
- * editor when a file is opened, not when its tab is first selected, so eager creation would spawn
- * a JCEF process — and let Crepe's markdown normalization dirty the Document — for every opened
- * Markdown file even if the user never selects the MilkJ tab.
+ * The browser is created eagerly in the constructor, even though IntelliJ instantiates every
+ * accepted provider's editor when a file is opened (not when its tab is first selected), so this
+ * spawns a JCEF process per opened Markdown file. A lazy show-triggered variant (0.1.5/0.1.6) made
+ * editor creation so fast that the Marketplace IDE-run verifier deterministically hit a platform
+ * threading bug on 2026.2 EAP: the daemon's first highlighting pass over the file races Gradle
+ * sync's background write action, and DaemonFusReporter then reads the editor model without a read
+ * action. JetBrains declined to treat it as a false positive, so we keep eager creation until the
+ * platform bug is fixed before re-attempting lazy init. Document dirtying from Crepe's markdown
+ * normalization is prevented by the frontend's echo suppression plus [MilkJBridge]'s write
+ * baseline, not by laziness.
  */
 class MilkJEditor(
     private val project: Project,
@@ -38,15 +40,8 @@ class MilkJEditor(
     private var browser: JBCefBrowser? = null
 
     init {
-        if (JBCefApp.isSupported()) {
-            panel.addHierarchyListener(object : HierarchyListener {
-                override fun hierarchyChanged(event: HierarchyEvent) {
-                    if (event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L && panel.isShowing) {
-                        panel.removeHierarchyListener(this)
-                        initializeBrowser()
-                    }
-                }
-            })
+        if (JcefSupport.isAvailable()) {
+            initializeBrowser()
         } else {
             // Fallback if this editor is ever constructed without JCEF (the provider normally
             // refuses such files up front).
