@@ -280,6 +280,8 @@ class MilkJBridge(
                 append("\"mermaidTheme\":").append(state.mermaidTheme.name.toJsonString()).append(",")
                 append("\"defaultEditor\":").append(state.defaultEditor.name.toJsonString()).append(",")
                 append("\"placeholder\":").append(state.placeholderText.toJsonString()).append(",")
+                append("\"proofingEnabled\":").append(state.spellcheckEnabled).append(",")
+                append("\"proofingDialect\":").append(state.proofingDialect.name.toJsonString()).append(",")
                 append("\"readonly\":").append(readonly)
                 append("}")
             }

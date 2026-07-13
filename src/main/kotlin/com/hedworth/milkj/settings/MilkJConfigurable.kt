@@ -6,6 +6,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.event.ItemListener
 import javax.swing.ComboBoxModel
 import javax.swing.JComboBox
 import javax.swing.JComponent
@@ -20,6 +21,9 @@ class MilkJConfigurable : Configurable {
     private var defaultEditorCombo: JComboBox<MilkJSettings.DefaultEditorMode>? = null
     private var placeholderField: JBTextField? = null
     private var showShortcutsTabCheckBox: JBCheckBox? = null
+    private var spellcheckCheckBox: JBCheckBox? = null
+    private var proofingDialectCombo: JComboBox<MilkJSettings.ProofingDialect>? = null
+    private var spellcheckListener: ItemListener? = null
 
     override fun getDisplayName(): String = "MilkJ"
 
@@ -33,6 +37,11 @@ class MilkJConfigurable : Configurable {
         defaultEditorCombo = JComboBox(MilkJSettings.DefaultEditorMode.entries.toTypedArray())
         placeholderField = JBTextField()
         showShortcutsTabCheckBox = JBCheckBox("Show the Shortcuts reference tab for Markdown files")
+        spellcheckCheckBox = JBCheckBox("Enable Harper spell checking")
+        proofingDialectCombo = JComboBox(MilkJSettings.ProofingDialect.entries.toTypedArray())
+        spellcheckListener = ItemListener {
+            proofingDialectCombo?.isEnabled = spellcheckCheckBox?.isSelected == true
+        }.also { spellcheckCheckBox!!.addItemListener(it) }
 
         createdPanel.addRow(0, "Theme mode:", themeCombo!!)
         createdPanel.addRow(1, "Editor theme:", editorThemeCombo!!)
@@ -40,6 +49,8 @@ class MilkJConfigurable : Configurable {
         createdPanel.addRow(3, "Default editor for Markdown:", defaultEditorCombo!!)
         createdPanel.addRow(4, "Placeholder text:", placeholderField!!)
         createdPanel.addRow(5, "", showShortcutsTabCheckBox!!)
+        createdPanel.addRow(6, "", spellcheckCheckBox!!)
+        createdPanel.addRow(7, "Proofreading dialect:", proofingDialectCombo!!)
         reset()
         return createdPanel
     }
@@ -51,7 +62,9 @@ class MilkJConfigurable : Configurable {
             mermaidThemeCombo?.selectedItem != state.mermaidTheme ||
             defaultEditorCombo?.selectedItem != state.defaultEditor ||
             placeholderField?.text != state.placeholderText ||
-            showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab
+            showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab ||
+            spellcheckCheckBox?.isSelected != state.spellcheckEnabled ||
+            proofingDialectCombo?.selectedItem != state.proofingDialect
     }
 
     override fun apply() {
@@ -66,6 +79,9 @@ class MilkJConfigurable : Configurable {
                     defaultEditorCombo?.selectedItem as MilkJSettings.DefaultEditorMode
                 it.placeholderText = placeholderField?.text.orEmpty()
                 it.showShortcutsTab = showShortcutsTabCheckBox?.isSelected ?: true
+                it.spellcheckEnabled = spellcheckCheckBox?.isSelected ?: true
+                it.proofingDialect =
+                    proofingDialectCombo?.selectedItem as MilkJSettings.ProofingDialect
             },
         )
     }
@@ -78,9 +94,13 @@ class MilkJConfigurable : Configurable {
         defaultEditorCombo?.selectedItem = state.defaultEditor
         placeholderField?.text = state.placeholderText
         showShortcutsTabCheckBox?.isSelected = state.showShortcutsTab
+        spellcheckCheckBox?.isSelected = state.spellcheckEnabled
+        proofingDialectCombo?.selectedItem = state.proofingDialect
+        proofingDialectCombo?.isEnabled = state.spellcheckEnabled
     }
 
     override fun disposeUIResources() {
+        spellcheckListener?.let { spellcheckCheckBox?.removeItemListener(it) }
         panel = null
         themeCombo = null
         editorThemeCombo = null
@@ -88,6 +108,9 @@ class MilkJConfigurable : Configurable {
         defaultEditorCombo = null
         placeholderField = null
         showShortcutsTabCheckBox = null
+        spellcheckCheckBox = null
+        proofingDialectCombo = null
+        spellcheckListener = null
     }
 
     private fun JPanel.addRow(row: Int, label: String, component: JComponent) {

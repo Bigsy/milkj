@@ -1,0 +1,50 @@
+import { Schema } from "@milkdown/kit/prose/model";
+import { describe, expect, it } from "vitest";
+import { extractLintBatches, mapCorrection } from "./extract";
+
+const schema = new Schema({
+  nodes: {
+    doc: { content: "block+" },
+    paragraph: { content: "inline*", group: "block" },
+    code_block: { content: "text*", group: "block", code: true },
+    text: { group: "inline" },
+    hard_break: { inline: true, group: "inline" },
+  },
+  marks: { inlineCode: { code: true } },
+});
+
+describe("semantic prose extraction", () => {
+  it("includes prose, joins mark boundaries, and excludes inline and block code", () => {
+    const inlineCode = schema.marks.inlineCode.create();
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, [
+        schema.text("A wierd "),
+        schema.text("sentence"),
+        schema.text(" code", [inlineCode]),
+        schema.text(" after"),
+      ]),
+      schema.node("code_block", null, schema.text("misspeled source")),
+      schema.node("paragraph", null, schema.text("Final prose")),
+    ]);
+    const batches = extractLintBatches(doc);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.text).toBe("A wierd sentence\n\n after\n\nFinal prose");
+    expect(mapCorrection(batches[0]!, {
+      startIndex: 2, endIndex: 7, correction: "weird",
+      suggestions: [{ replacement: "weird" }], types: ["spelling"], explanation: "",
+    }, "one")).toMatchObject({ from: 3, to: 8 });
+    expect(mapCorrection(batches[0]!, {
+      startIndex: 15, endIndex: 20, correction: "bridge",
+      suggestions: [], types: [], explanation: "",
+    }, "bad")).toBeNull();
+  });
+
+  it("windows long runs without splitting surrogate pairs", () => {
+    const text = `${"a".repeat(3999)}😀${"b".repeat(4200)}`;
+    const doc = schema.node("doc", null, schema.node("paragraph", null, schema.text(text)));
+    const batches = extractLintBatches(doc);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.every((batch) => batch.text.length <= 4000)).toBe(true);
+    expect(batches.every((batch) => !/^\udc00/.test(batch.text) && !/\ud83d$/.test(batch.text))).toBe(true);
+  });
+});

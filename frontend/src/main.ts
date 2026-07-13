@@ -11,6 +11,8 @@ import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { installFindBar } from "./findbar";
+import { ProofingController } from "./proofing/plugin";
+import type { ProofingDialect } from "./proofing/types";
 import "@milkdown/crepe/theme/common/style.css";
 
 // MilkJ frontend entry point.
@@ -46,6 +48,8 @@ interface MilkJConfig {
   placeholder: string;
   // True when the file is not writable in the IDE; the editor surface must not accept edits.
   readonly?: boolean;
+  proofingEnabled: boolean;
+  proofingDialect: ProofingDialect;
 }
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -120,6 +124,15 @@ const findBar = installFindBar({
   },
 });
 
+const proofingController = new ProofingController({
+  onUserEdit: () => {
+    suppressEchoUntil = 0;
+  },
+});
+window.addEventListener("pagehide", () => {
+  void proofingController.dispose();
+}, { once: true });
+
 async function createEditor() {
   const markdown = currentMarkdown;
   creatingEditor = true;
@@ -151,6 +164,7 @@ async function createEditor() {
       },
     });
     crepe.editor.use($prose(() => search()));
+    crepe.editor.use($prose(() => proofingController.createPlugin()));
     await crepe.create();
     crepe.setReadonly(currentReadonly);
     crepe.on((listener) => {
@@ -286,6 +300,7 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
   currentReadonly = config.readonly === true;
   crepe?.setReadonly(currentReadonly);
   findBar.setReadonly(currentReadonly);
+  proofingController.configure(config.proofingEnabled, config.proofingDialect, currentReadonly);
   applyChrome();
   // The placeholder is baked into the editor at creation, and Mermaid bakes its theme into each
   // rendered SVG (previews only re-render when their code block's content changes) — either
@@ -531,6 +546,92 @@ style.textContent = `
     color: var(--crepe-color-error);
     font-family: var(--crepe-font-code);
     white-space: pre-wrap;
+  }
+
+  :root {
+    --milkj-proofing-spelling: #d1242f;
+    --milkj-proofing-grammar: #8250df;
+    --milkj-proofing-punctuation: #0969da;
+    --milkj-proofing-style: #6e7781;
+  }
+
+  :root[data-theme="dark"] {
+    --milkj-proofing-spelling: #ff7b72;
+    --milkj-proofing-grammar: #d2a8ff;
+    --milkj-proofing-punctuation: #79c0ff;
+    --milkj-proofing-style: #b1bac4;
+  }
+
+  .milkj-proofing-issue {
+    text-decoration-line: underline;
+    text-decoration-style: wavy;
+    text-decoration-thickness: 1.2px;
+    text-underline-offset: 3px;
+    cursor: pointer;
+  }
+
+  .milkj-proofing-issue--spelling { text-decoration-color: var(--milkj-proofing-spelling); color: inherit; }
+  .milkj-proofing-issue--grammar { text-decoration-color: var(--milkj-proofing-grammar); color: inherit; }
+  .milkj-proofing-issue--punctuation { text-decoration-color: var(--milkj-proofing-punctuation); color: inherit; }
+  .milkj-proofing-issue--style { text-decoration-color: var(--milkj-proofing-style); color: inherit; }
+
+  .milkj-proofing-widget {
+    display: inline-block;
+    width: 4px;
+    height: 1em;
+    overflow: visible;
+    color: var(--milkj-proofing-punctuation);
+    cursor: pointer;
+    user-select: none;
+    vertical-align: baseline;
+  }
+
+  .milkj-proofing-popup {
+    position: fixed;
+    z-index: 1000;
+    box-sizing: border-box;
+    max-width: min(360px, calc(100vw - 16px));
+    padding: 12px;
+    border: 1px solid var(--crepe-color-outline, var(--milkj-border));
+    border-radius: 8px;
+    background: var(--crepe-color-surface, var(--milkj-bg));
+    color: var(--crepe-color-on-surface, var(--milkj-fg));
+    box-shadow: var(--crepe-shadow-2, 0 4px 16px rgba(0, 0, 0, .2));
+    font: 13px/1.4 system-ui, sans-serif;
+  }
+
+  .milkj-proofing-popup__category {
+    margin-bottom: 4px;
+    color: var(--crepe-color-on-surface-variant, currentColor);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .milkj-proofing-popup__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .milkj-proofing-popup__actions button {
+    padding: 5px 9px;
+    border: 1px solid var(--crepe-color-outline, var(--milkj-border));
+    border-radius: 5px;
+    background: var(--crepe-color-secondary, transparent);
+    color: var(--crepe-color-on-secondary, inherit);
+    cursor: pointer;
+  }
+
+  .milkj-proofing-popup__actions button:focus-visible {
+    outline: 2px solid var(--crepe-color-primary, Highlight);
+    outline-offset: 2px;
+  }
+
+  .milkj-proofing-popup__empty {
+    margin-top: 8px;
+    color: var(--crepe-color-on-surface-variant, currentColor);
   }
 `;
 document.head.append(style);

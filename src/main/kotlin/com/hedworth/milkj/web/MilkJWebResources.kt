@@ -143,6 +143,7 @@ object MilkJWebResources {
                     "woff" -> "font/woff"
                     "woff2" -> "font/woff2"
                     "map" -> "application/json"
+                    "wasm" -> "application/wasm"
                     else -> "application/octet-stream"
                 }
         }

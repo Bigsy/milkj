@@ -196,5 +196,38 @@ class MilkJBridgeTest : BasePlatformTestCase() {
     fun testFrontendConfigJsonCarriesReadonlyFlag() {
         val json = MilkJBridge.frontendConfigJson(MilkJSettings.State(), readonly = true)
         assertTrue(json.contains("\"readonly\":true"))
+        assertTrue(json.contains("\"proofingEnabled\":true"))
+        assertTrue(json.contains("\"proofingDialect\":\"AUTO\""))
+    }
+
+    fun testFrontendConfigJsonCarriesDisabledProofingIndependentlyFromReadonly() {
+        val state = MilkJSettings.State().apply {
+            spellcheckEnabled = false
+            proofingDialect = MilkJSettings.ProofingDialect.BRITISH
+        }
+        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
+        assertTrue(json.contains("\"proofingEnabled\":false"))
+        assertTrue(json.contains("\"proofingDialect\":\"BRITISH\""))
+        assertTrue(json.contains("\"readonly\":false"))
+    }
+
+    fun testEveryProofingDialectSerializes() {
+        MilkJSettings.ProofingDialect.entries.forEach { dialect ->
+            val state = MilkJSettings.State().apply { proofingDialect = dialect }
+            assertTrue(
+                MilkJBridge.frontendConfigJson(state, readonly = false)
+                    .contains("\"proofingDialect\":\"${dialect.name}\""),
+            )
+        }
+    }
+
+    fun testSettingsCopyPreservesProofingState() {
+        val state = MilkJSettings.State().apply {
+            spellcheckEnabled = false
+            proofingDialect = MilkJSettings.ProofingDialect.CANADIAN
+        }
+        val copy = state.copy()
+        assertFalse(copy.spellcheckEnabled)
+        assertEquals(MilkJSettings.ProofingDialect.CANADIAN, copy.proofingDialect)
     }
 }

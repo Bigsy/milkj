@@ -38,6 +38,8 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var defaultEditor: DefaultEditorMode = DefaultEditorMode.BUILT_IN
         var placeholderText: String = "Start writing..."
         var showShortcutsTab: Boolean = true
+        var spellcheckEnabled: Boolean = true
+        var proofingDialect: ProofingDialect = ProofingDialect.AUTO
 
         fun copy(): State =
             State().also {
@@ -47,6 +49,8 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.defaultEditor = defaultEditor
                 it.placeholderText = placeholderText
                 it.showShortcutsTab = showShortcutsTab
+                it.spellcheckEnabled = spellcheckEnabled
+                it.proofingDialect = proofingDialect
             }
     }
 
@@ -80,6 +84,17 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
     enum class DefaultEditorMode(private val label: String) {
         BUILT_IN("Built-in editor"),
         MILKJ("MilkJ");
+
+        override fun toString(): String = label
+    }
+
+    enum class ProofingDialect(private val label: String) {
+        AUTO("Auto"),
+        AMERICAN("American English"),
+        BRITISH("British English"),
+        AUSTRALIAN("Australian English"),
+        CANADIAN("Canadian English"),
+        INDIAN("Indian English");
 
         override fun toString(): String = label
     }

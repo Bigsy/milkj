@@ -113,5 +113,6 @@ val frontendBuild = tasks.register<Exec>("frontendBuild") {
 tasks {
     processResources {
         dependsOn(frontendBuild)
+        from("THIRD_PARTY_NOTICES.md")
     }
 }
