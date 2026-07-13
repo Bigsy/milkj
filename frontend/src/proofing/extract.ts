@@ -5,13 +5,19 @@ const MAX_BATCH = 4000;
 const OVERLAP = 200;
 const EXCLUDED_NODES = new Set(["code_block", "html", "html_block", "html_inline", "image", "math_inline", "math_block"]);
 
-interface SourceRun { text: string; docFrom: number; docTo: number }
+interface SourceRun {
+  text: string;
+  docFrom: number;
+  docTo: number;
+  block: ProseMirrorNode | null;
+  separatorBefore: "" | " " | "\n\n";
+}
 
 export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
   const sourceRuns: SourceRun[] = [];
   let current: SourceRun | undefined;
 
-  doc.descendants((node, pos) => {
+  doc.descendants((node, pos, parent) => {
     if (EXCLUDED_NODES.has(node.type.name)) {
       current = undefined;
       return false;
@@ -23,11 +29,24 @@ export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
     }
     const text = node.text ?? "";
     if (!text) return false;
-    if (current && current.docTo === pos) {
+    if (current && current.docTo === pos && current.block === parent) {
       current.text += text;
       current.docTo += text.length;
     } else {
-      current = { text, docFrom: pos, docTo: pos + text.length };
+      const previous = sourceRuns.at(-1);
+      current = {
+        text,
+        docFrom: pos,
+        docTo: pos + text.length,
+        block: parent,
+        // An excluded inline node interrupts mapping, not the surrounding sentence. Preserve any
+        // surrounding whitespace (or add one space) without allowing a correction to cross the gap.
+        separatorBefore: previous
+          ? (previous.block === parent
+            ? (/\s$/.test(previous.text) || /^\s/.test(text) ? "" : " ")
+            : "\n\n")
+          : "",
+      };
       sourceRuns.push(current);
     }
     return false;
@@ -38,7 +57,7 @@ export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
   const merged: SourceRun[] = [];
   for (const run of sourceRuns) {
     const previous = merged.at(-1);
-    if (previous && previous.docTo === run.docFrom) {
+    if (previous && previous.docTo === run.docFrom && previous.block === run.block) {
       previous.text += run.text;
       previous.docTo = run.docTo;
     } else {
@@ -84,9 +103,9 @@ function packRuns(runs: SourceRun[]): LintBatch[] {
       });
       continue;
     }
-    const separator = mapped.length ? "\n\n" : "";
+    const separator = mapped.length ? run.separatorBefore : "";
     if (text.length + separator.length + run.text.length > MAX_BATCH) flush();
-    if (mapped.length) text += "\n\n";
+    if (mapped.length) text += run.separatorBefore;
     const textFrom = text.length;
     text += run.text;
     mapped.push({ textFrom, textTo: text.length, docFrom: run.docFrom, docTo: run.docTo });

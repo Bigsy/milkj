@@ -22,6 +22,19 @@ describe("Harper 2.4.0 integration", () => {
       expect(corrections.some((issue) =>
         issue.startIndex === 8 && issue.suggestions.some(({ replacement }) => replacement === "weird"),
       )).toBe(true);
+
+      const context = "Read  before starting.";
+      const contextLints = await linter.lint(context, { language: "plaintext" });
+      try {
+        const contextCorrections = normalizeHarperLints(context, contextLints);
+        expect(contextCorrections.some((issue) =>
+          issue.startIndex === 6 &&
+          issue.endIndex === 12 &&
+          issue.suggestions.some(({ replacement }) => replacement === "Before"),
+        )).toBe(false);
+      } finally {
+        contextLints.forEach((lint) => lint.free());
+      }
     } finally {
       lints.forEach((lint) => lint.free());
       await linter.dispose();

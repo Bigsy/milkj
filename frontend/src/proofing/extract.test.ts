@@ -28,7 +28,7 @@ describe("semantic prose extraction", () => {
     ]);
     const batches = extractLintBatches(doc);
     expect(batches).toHaveLength(1);
-    expect(batches[0]?.text).toBe("A wierd sentence\n\n after\n\nFinal prose");
+    expect(batches[0]?.text).toBe("A wierd sentence after\n\nFinal prose");
     expect(mapCorrection(batches[0]!, {
       startIndex: 2, endIndex: 7, correction: "weird",
       suggestions: [{ replacement: "weird" }], types: ["spelling"], explanation: "",
@@ -37,6 +37,18 @@ describe("semantic prose extraction", () => {
       startIndex: 15, endIndex: 20, correction: "bridge",
       suggestions: [], types: [], explanation: "",
     }, "bad")).toBeNull();
+  });
+
+  it("keeps lowercase prose after inline code in the same sentence context", () => {
+    const inlineCode = schema.marks.inlineCode.create();
+    const doc = schema.node("doc", null, schema.node("paragraph", null, [
+      schema.text("Read "),
+      schema.text("AGENTS.md", [inlineCode]),
+      schema.text(" before starting."),
+    ]));
+    const [batch] = extractLintBatches(doc);
+    expect(batch?.text).toBe("Read  before starting.");
+    expect(batch?.runs).toHaveLength(2);
   });
 
   it("windows long runs without splitting surrogate pairs", () => {
