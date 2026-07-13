@@ -39,6 +39,12 @@ jobs:
         env:
           CI: "true"
 
+      - name: Test frontend
+        working-directory: frontend
+        run: pnpm test
+        env:
+          CI: "true"
+
       - name: Run plugin tests
         run: ./gradlew test
 

@@ -9,27 +9,36 @@ interface SourceRun {
   text: string;
   docFrom: number;
   docTo: number;
-  block: ProseMirrorNode | null;
-  separatorBefore: "" | " " | "\n\n";
+  blockFrom: number;
+  separatorBefore: "" | " " | "\n" | "\n\n";
 }
 
 export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
   const sourceRuns: SourceRun[] = [];
   let current: SourceRun | undefined;
+  let pendingSeparator: "inline" | "hardBreak" | undefined;
 
-  doc.descendants((node, pos, parent) => {
+  doc.descendants((node, pos) => {
+    if (node.type.name === "hard_break") {
+      current = undefined;
+      pendingSeparator = "hardBreak";
+      return false;
+    }
     if (EXCLUDED_NODES.has(node.type.name)) {
       current = undefined;
+      pendingSeparator = "inline";
       return false;
     }
     if (!node.isText) return true;
     if (node.marks.some((mark) => mark.type.name === "inlineCode" || mark.type.name === "inline_code")) {
       current = undefined;
+      pendingSeparator = "inline";
       return false;
     }
     const text = node.text ?? "";
     if (!text) return false;
-    if (current && current.docTo === pos && current.block === parent) {
+    const blockFrom = doc.resolve(pos).start();
+    if (current && current.docTo === pos && current.blockFrom === blockFrom) {
       current.text += text;
       current.docTo += text.length;
     } else {
@@ -38,17 +47,20 @@ export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
         text,
         docFrom: pos,
         docTo: pos + text.length,
-        block: parent,
+        blockFrom,
         // An excluded inline node interrupts mapping, not the surrounding sentence. Preserve any
         // surrounding whitespace (or add one space) without allowing a correction to cross the gap.
         separatorBefore: previous
-          ? (previous.block === parent
-            ? (/\s$/.test(previous.text) || /^\s/.test(text) ? "" : " ")
+          ? (previous.blockFrom === blockFrom
+            ? (pendingSeparator === "hardBreak"
+              ? "\n"
+              : (/\s$/.test(previous.text) || /^\s/.test(text) ? "" : " "))
             : "\n\n")
           : "",
       };
       sourceRuns.push(current);
     }
+    pendingSeparator = undefined;
     return false;
   });
 
@@ -57,7 +69,7 @@ export function extractLintBatches(doc: ProseMirrorNode): LintBatch[] {
   const merged: SourceRun[] = [];
   for (const run of sourceRuns) {
     const previous = merged.at(-1);
-    if (previous && previous.docTo === run.docFrom && previous.block === run.block) {
+    if (previous && previous.docTo === run.docFrom && previous.blockFrom === run.blockFrom) {
       previous.text += run.text;
       previous.docTo = run.docTo;
     } else {
@@ -122,7 +134,12 @@ function safeBoundary(text: string, offset: number, bias: -1 | 1): number {
 export function mapCorrection(batch: LintBatch, correction: HarperCorrection, id: string): MappedIssue | null {
   const trustedFrom = batch.trustedFrom ?? 0;
   const trustedTo = batch.trustedTo ?? batch.text.length;
-  if (correction.startIndex < trustedFrom || correction.endIndex > trustedTo) return null;
+  const isFinalBoundaryInsertion = correction.startIndex === correction.endIndex &&
+    correction.startIndex === trustedTo && trustedTo === batch.text.length;
+  if (
+    correction.startIndex < trustedFrom ||
+    (correction.startIndex >= trustedTo && !isFinalBoundaryInsertion)
+  ) return null;
   const run = batch.runs.find(({ textFrom, textTo }) =>
     correction.startIndex >= textFrom && correction.endIndex <= textTo,
   );

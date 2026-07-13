@@ -7,9 +7,11 @@ import {
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { editorViewCtx } from "@milkdown/kit/core";
+import { Plugin } from "@milkdown/kit/prose/state";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import { search } from "prosemirror-search";
+import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
@@ -28,7 +30,7 @@ declare global {
     // Injected by JCEF (JBCefJSQuery.inject) so the page can push Markdown back to the IDE.
     milkjSendToIde?: (message: string) => void;
     // Called by the IDE to push fresh Markdown into the editor (external edits, initial load).
-    milkjSetMarkdown?: (markdown: string) => void;
+    milkjSetMarkdown?: (markdown: string, revision: number) => void;
     milkjApplyConfig?: (config: MilkJConfig) => void;
     milkjBridgeInstalled?: () => void;
   }
@@ -80,27 +82,15 @@ let creatingEditor = false;
 let readySent = false;
 let mermaidRenderSeq = 0;
 
-// Milkdown's listener plugin fires markdownUpdated ~200ms (debounced) after ANY doc-changing
-// transaction — including Crepe's own init/normalization transactions and content the IDE just
-// pushed in. Those echoes must never reach the IDE: the Crepe-normalized markdown usually differs
-// from the text on disk (bullet style, escaping, spacing), so writing it into the Document would
-// dirty it without any user edit and trigger spurious "File Cache Conflict" dialogs.
-//
-// A boolean flag can't model this: the echo arrives after the apply returns (debounce), and an
-// apply that leaves the doc unchanged fires no echo at all, which would strand the flag. Instead,
-// echoes are suppressed for a time window after every IDE-driven apply; any direct user
-// interaction lifts the suppression immediately so real edits are never swallowed.
-const ECHO_SUPPRESS_MS = 500;
-let suppressEchoUntil = 0;
+// Milkdown reports markdownUpdated asynchronously for both user transactions and content the IDE
+// applied. Track the origin at the ProseMirror transaction itself instead of guessing with a time
+// window: only a document change that did not happen during an IDE apply may travel back. The IDE
+// also attaches a monotonically increasing revision, so even an unusually delayed callback cannot
+// overwrite a newer document.
+const bridgeSync = new EditorBridgeSync();
 
-function suppressMarkdownEchoes() {
-  suppressEchoUntil = performance.now() + ECHO_SUPPRESS_MS;
-}
-
-for (const type of ["keydown", "pointerdown", "paste", "cut", "drop"]) {
-  root.addEventListener(type, () => {
-    suppressEchoUntil = 0;
-  }, { capture: true });
+function markUserEdit() {
+  bridgeSync.recordUserEdit();
 }
 
 applyChrome();
@@ -118,16 +108,12 @@ const findBar = installFindBar({
       return undefined;
     }
   },
-  // A replace is a real user edit: it must reach the IDE even inside the echo window.
-  onUserEdit: () => {
-    suppressEchoUntil = 0;
-  },
+  // A replace is a real user edit even though it is dispatched programmatically.
+  onUserEdit: markUserEdit,
 });
 
 const proofingController = new ProofingController({
-  onUserEdit: () => {
-    suppressEchoUntil = 0;
-  },
+  onUserEdit: markUserEdit,
 });
 window.addEventListener("pagehide", () => {
   void proofingController.dispose();
@@ -164,23 +150,35 @@ async function createEditor() {
       },
     });
     crepe.editor.use($prose(() => search()));
+    crepe.editor.use($prose(() => new Plugin({
+      view: () => ({
+        update(view, previousState) {
+          if (!view.state.doc.eq(previousState.doc)) {
+            bridgeSync.recordDocumentChange(creatingEditor);
+          }
+        },
+      }),
+    })));
     crepe.editor.use($prose(() => proofingController.createPlugin()));
     await crepe.create();
     crepe.setReadonly(currentReadonly);
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         currentMarkdown = markdown;
-        if (performance.now() >= suppressEchoUntil) {
-          window.milkjSendToIde?.(`markdown:${markdown}`);
+        const message = bridgeSync.messageForMarkdown(markdown);
+        if (message) {
+          window.milkjSendToIde?.(message);
         }
         findBar.refresh();
       });
     });
     // Content the IDE pushed while the editor was being (re)built.
     if (currentMarkdown !== markdown) {
-      crepe.editor.action(replaceAll(currentMarkdown));
+      const activeCrepe = crepe;
+      bridgeSync.applyFromIde(() => {
+        activeCrepe.editor.action(replaceAll(currentMarkdown));
+      });
     }
-    suppressMarkdownEchoes();
   } finally {
     creatingEditor = false;
   }
@@ -270,7 +268,8 @@ function createMermaidStreamParser(): StreamParser<null> {
   };
 }
 
-window.milkjSetMarkdown = (markdown: string) => {
+window.milkjSetMarkdown = (markdown: string, revision: number) => {
+  bridgeSync.acceptIdeRevision(revision);
   if (markdown === currentMarkdown) {
     return;
   }
@@ -283,8 +282,10 @@ window.milkjSetMarkdown = (markdown: string) => {
   if (crepe && editorReady) {
     // Replace content in place: rebuilding Crepe on every external edit would tear down
     // ProseMirror and the CodeMirror blocks, losing cursor and scroll.
-    crepe.editor.action(replaceAll(markdown));
-    suppressMarkdownEchoes();
+    const activeCrepe = crepe;
+    bridgeSync.applyFromIde(() => {
+      activeCrepe.editor.action(replaceAll(markdown));
+    });
   } else {
     void createEditor();
   }

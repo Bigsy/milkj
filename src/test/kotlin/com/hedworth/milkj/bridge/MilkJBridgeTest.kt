@@ -50,6 +50,15 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
     }
 
+    private fun sendMarkdownFromPage(markdown: String, revision: Long = latestPageRevision()) {
+        sendFromPage("markdown:$revision\n$markdown")
+    }
+
+    private fun latestPageRevision(): Long {
+        val script = connection.executedScripts.last { it.startsWith("window.milkjSetMarkdown") }
+        return Regex(", (\\d+)\\);$").find(script)!!.groupValues[1].toLong()
+    }
+
     private fun isDocumentUnsaved(): Boolean =
         FileDocumentManager.getInstance().isDocumentUnsaved(document)
 
@@ -76,7 +85,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Title\n")
 
         sendFromPage("ready")
-        sendFromPage("markdown:# Title\n")
+        sendMarkdownFromPage("# Title\n")
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
@@ -90,7 +99,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Title\n")
         sendFromPage("ready")
 
-        sendFromPage("markdown:# Edited Title\n")
+        sendMarkdownFromPage("# Edited Title\n")
         assertEquals("write must be debounced, not immediate", "# Title\n", document.text)
 
         bridge.drainDebouncesForTest()
@@ -118,7 +127,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
             testRootDisposable,
         )
 
-        sendFromPage("markdown:line one\nline 2\nline three\n")
+        sendMarkdownFromPage("line one\nline 2\nline three\n")
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
@@ -131,7 +140,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
     fun testMarkdownMessageBeforeReadyIsIgnored() {
         setUpBridge("original\n")
 
-        sendFromPage("markdown:should be ignored\n")
+        sendFromPage("markdown:0\nshould be ignored\n")
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
@@ -143,7 +152,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("original\n")
         sendFromPage("ready")
 
-        sendFromPage("markdown:page edit\n")
+        sendMarkdownFromPage("page edit\n")
         // Before the debounced write fires, the document changes from outside the page
         // (e.g. typing in the native source tab). The stale page write must be dropped.
         WriteCommandAction.runWriteCommandAction(project) {
@@ -153,6 +162,73 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
         assertEquals("native edit\n", document.text)
+    }
+
+    fun testStalePageRevisionCannotOverwriteNewerDocument() {
+        setUpBridge("original\n")
+        sendFromPage("ready")
+        val staleRevision = latestPageRevision()
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            document.setText("newer native edit\n")
+        }
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        assertTrue(latestPageRevision() > staleRevision)
+
+        sendMarkdownFromPage("stale page edit\n", staleRevision)
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertEquals("newer native edit\n", document.text)
+    }
+
+    fun testPhysicalDiskChangeCannotBeOverwrittenBeforeVfsNotification() {
+        setUpBridge("original\n")
+        sendFromPage("ready")
+
+        // Simulate another IntelliJ process writing the file before this process receives a VFS
+        // event. The content hash guard must catch it even though the page revision is current.
+        bridge.setDiskTextForTest("newer content from other IDE\n")
+        sendMarkdownFromPage("stale page edit\n")
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertFalse(
+            "the stale page edit must not reach the Document",
+            document.text == "stale page edit\n",
+        )
+        assertTrue(
+            "a conflict makes MilkJ read-only until IntelliJ reconciles the file",
+            connection.executedScripts.any {
+                it.startsWith("window.milkjApplyConfig") && it.contains("\"readonly\":true")
+            },
+        )
+    }
+
+    fun testStartupRefreshProtectsDiskFromAnOldRestoredTab() {
+        file = myFixture.configureByText("test.md", "old restored tab\n").virtualFile
+        document = FileDocumentManager.getInstance().getDocument(file)!!
+        FileDocumentManager.getInstance().saveAllDocuments()
+        connection = FakeBrowserConnection()
+        bridge = MilkJBridge(project, file, connection)
+        bridge.setDiskTextForTest("latest disk version\n")
+        Disposer.register(testRootDisposable, bridge)
+        bridge.install()
+        sendFromPage("ready")
+
+        // Whether IntelliJ reloads the clean Document immediately or briefly reports a conflict,
+        // the old page content must never be allowed to travel back into the file.
+        sendMarkdownFromPage("old restored tab normalized\n")
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertFalse(document.text == "old restored tab normalized\n")
+        assertTrue(
+            connection.executedScripts.any {
+                it.startsWith("window.milkjApplyConfig") && it.contains("\"readonly\":true")
+            },
+        )
     }
 
     // --- IDE -> page pushes ---

@@ -10,8 +10,10 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.impl.LoadTextUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.text.StringUtil
+import com.intellij.openapi.vfs.StandardFileSystems
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.openapi.vfs.VfsUtilCore
@@ -23,6 +25,9 @@ import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
 import org.jetbrains.annotations.TestOnly
+import java.nio.file.Files
+import java.security.MessageDigest
+import java.util.Base64
 
 /**
  * Two-way bridge between the Milkdown editor (JS, in JCEF) and the IntelliJ document model.
@@ -46,9 +51,13 @@ class MilkJBridge(
     private val pushDebounce = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     private var pageReady = false
     private var applyingFromPage = false
-    private var knownDiskLastModified = diskLastModified()
+    private var pageRevision = 0L
+    private var trustedDiskFingerprint: DiskFingerprint? = null
+    private var syncBlocked = false
+    private var testDiskSnapshot: DiskSnapshot? = null
+    private var testDiskVersion = 0L
 
-    // One notification per conflict burst: reset whenever the page receives fresh content again.
+    // One notification per conflict burst; reset only after disk and Document agree again.
     private var conflictNotified = false
 
     fun install() {
@@ -63,7 +72,13 @@ class MilkJBridge(
                         // Coalesce keystrokes in the native tab into one push to the page.
                         pushDebounce.cancelAllRequests()
                         pushDebounce.addRequest(
-                            { pushMarkdown(currentMarkdown()) },
+                            {
+                                if (syncBlocked) {
+                                    reconcileDiskAndDocument(pushResolvedContent = true)
+                                } else {
+                                    pushMarkdown(currentMarkdown())
+                                }
+                            },
                             IDE_TO_EDITOR_DEBOUNCE_MS,
                         )
                     }
@@ -77,8 +92,12 @@ class MilkJBridge(
             object : BulkFileListener {
                 override fun after(events: List<VFileEvent>) {
                     if (events.any { it is VFileContentChangeEvent && it.file.url == file.url }) {
-                        knownDiskLastModified = diskLastModified()
                         writeDebounce.cancelAllRequests()
+                        ApplicationManager.getApplication().invokeLater {
+                            if (!project.isDisposed && file.isValid) {
+                                reconcileDiskAndDocument(pushResolvedContent = pageReady)
+                            }
+                        }
                     }
                     val writabilityChanged = events.any {
                         it is VFilePropertyChangeEvent &&
@@ -115,6 +134,16 @@ class MilkJBridge(
         pushDebounce.drainRequestsInTest()
     }
 
+    @TestOnly
+    internal fun setDiskTextForTest(markdown: String) {
+        testDiskVersion++
+        val bytes = markdown.toByteArray(file.charset)
+        testDiskSnapshot = DiskSnapshot(
+            markdown,
+            fingerprint(bytes, testDiskVersion),
+        )
+    }
+
     private fun handlePageMessage(message: String) {
         // JCEF delivers page messages on a browser thread; everything below (document text, stamps,
         // VFS) must be read on the EDT — newer platform builds assert on off-EDT document access.
@@ -125,22 +154,33 @@ class MilkJBridge(
             when {
                 message == "ready" -> {
                     pageReady = true
+                    // A restored IntelliJ Document can predate the physical file. Refresh first,
+                    // then refuse page writes if IntelliJ still holds different text; otherwise a
+                    // delayed Milkdown normalization echo could dirty and later autosave the stale
+                    // Document over the newer file.
+                    reconcileDiskAndDocument(pushResolvedContent = false)
                     // Config first: the page applies theme/placeholder/readonly before the content
                     // lands, so a config-driven editor rebuild happens while it's still empty.
                     pushConfig()
                     pushMarkdown(currentMarkdown())
                 }
                 message.startsWith("markdown:") && pageReady -> {
-                    scheduleDocumentWrite(message.removePrefix("markdown:"))
+                    parsePageMarkdown(message.removePrefix("markdown:"))?.let { pageEdit ->
+                        scheduleDocumentWrite(pageEdit)
+                    }
                 }
             }
         }
     }
 
-    private fun scheduleDocumentWrite(markdown: String) {
-        if (hasUnseenDiskChange()) {
-            file.refresh(false, false)
-            notifyPageEditDropped()
+    private fun scheduleDocumentWrite(pageEdit: PageEdit) {
+        if (pageEdit.revision != pageRevision) {
+            // The page emitted an update created from content that the IDE has since replaced.
+            pushMarkdown(currentMarkdown())
+            return
+        }
+        if (syncBlocked || !diskMatchesTrustedBaseline()) {
+            enterSyncConflict()
             return
         }
 
@@ -148,13 +188,14 @@ class MilkJBridge(
         val baseline = WriteBaseline(
             documentModificationStamp = document.modificationStamp,
             fileModificationStamp = file.modificationStamp,
-            diskLastModified = diskLastModified(),
+            diskFingerprint = trustedDiskFingerprint ?: return,
+            pageRevision = pageEdit.revision,
         )
 
         writeDebounce.cancelAllRequests()
         writeDebounce.addRequest(
             {
-                writeMarkdownToDocument(markdown, baseline)
+                writeMarkdownToDocument(pageEdit.markdown, baseline)
             },
             EDITOR_TO_IDE_DEBOUNCE_MS,
         )
@@ -168,11 +209,11 @@ class MilkJBridge(
         val document = FileDocumentManager.getInstance().getDocument(file) ?: return
         if (document.modificationStamp != baseline.documentModificationStamp ||
             file.modificationStamp != baseline.fileModificationStamp ||
-            diskLastModified() != baseline.diskLastModified ||
-            hasUnseenDiskChange()
+            pageRevision != baseline.pageRevision ||
+            diskFingerprint() != baseline.diskFingerprint ||
+            syncBlocked
         ) {
-            file.refresh(false, false)
-            notifyPageEditDropped()
+            enterSyncConflict()
             return
         }
         if (document.text == markdown) {
@@ -219,16 +260,28 @@ class MilkJBridge(
     }
 
     private fun pushMarkdown(markdown: String) {
-        conflictNotified = false
-        executeJavaScript("window.milkjSetMarkdown?.(${markdown.toJsonString()});")
+        pageRevision++
+        executeJavaScript("window.milkjSetMarkdown?.(${markdown.toJsonString()}, $pageRevision);")
     }
 
     private fun pushConfig() {
-        val configJson = frontendConfigJson(settings.state, readonly = !file.isWritable)
+        val configJson = frontendConfigJson(settings.state, readonly = !file.isWritable || syncBlocked)
         executeJavaScript("window.milkjApplyConfig?.($configJson);")
     }
 
-    private fun notifyPageEditDropped() {
+    private fun enterSyncConflict() {
+        writeDebounce.cancelAllRequests()
+        if (!syncBlocked) {
+            syncBlocked = true
+            if (pageReady) {
+                pushConfig()
+            }
+        }
+        file.refresh(false, false)
+        notifySyncConflict()
+    }
+
+    private fun notifySyncConflict() {
         if (conflictNotified) {
             return
         }
@@ -236,8 +289,8 @@ class MilkJBridge(
         NotificationGroupManager.getInstance()
             .getNotificationGroup("MilkJ")
             .createNotification(
-                "File changed outside MilkJ",
-                "\"${file.name}\" changed outside the MilkJ editor. MilkJ reloaded the new content and discarded its latest unsynced edit.",
+                "MilkJ paused to protect newer file content",
+                "\"${file.name}\" differs between IntelliJ and disk. MilkJ is read-only until you save or reload the file in IntelliJ, so it cannot overwrite the disk version.",
                 NotificationType.WARNING,
             )
             .notify(project)
@@ -251,15 +304,88 @@ class MilkJBridge(
         return VfsUtilCore.loadText(file)
     }
 
+    /**
+     * Establishes a trusted physical-file baseline only when IntelliJ's Document contains exactly
+     * the text loaded from that file. A mismatch is deliberately not resolved here: it may be a
+     * legitimate unsaved edit, so IntelliJ remains responsible for asking the user whether to save
+     * or reload it. MilkJ simply becomes read-only until the two sides agree again.
+     */
+    private fun reconcileDiskAndDocument(pushResolvedContent: Boolean) {
+        file.refresh(false, false)
+        val document = FileDocumentManager.getInstance().getDocument(file) ?: return
+        val disk = diskSnapshot()
+        if (disk == null || document.text != disk.text) {
+            enterSyncConflict()
+            return
+        }
+
+        trustedDiskFingerprint = disk.fingerprint
+        val wasBlocked = syncBlocked
+        syncBlocked = false
+        conflictNotified = false
+        if (pageReady && wasBlocked) {
+            pushConfig()
+        }
+        if (pageReady && pushResolvedContent) {
+            pushMarkdown(document.text)
+        }
+    }
+
     private fun executeJavaScript(script: String) {
         connection.executeJavaScript(script)
     }
 
-    private fun hasUnseenDiskChange(): Boolean =
-        diskLastModified() != knownDiskLastModified
+    private fun diskMatchesTrustedBaseline(): Boolean {
+        val trusted = trustedDiskFingerprint ?: return false
+        return diskFingerprint() == trusted
+    }
 
-    private fun diskLastModified(): Long =
-        runCatching { VfsUtilCore.virtualToIoFile(file).lastModified() }.getOrDefault(0L)
+    private fun diskFingerprint(): DiskFingerprint? = diskSnapshot()?.fingerprint
+
+    private fun diskSnapshot(): DiskSnapshot? {
+        testDiskSnapshot?.let { return it }
+
+        if (file.fileSystem.protocol == StandardFileSystems.FILE_PROTOCOL) {
+            // A failed physical read is a conflict, not permission to fall back to possibly stale
+            // VFS bytes. The page must never write while the authoritative file is unreadable.
+            return runCatching {
+                val path = VfsUtilCore.virtualToIoFile(file).toPath()
+                val bytes = Files.readAllBytes(path)
+                DiskSnapshot(
+                    LoadTextUtil.getTextByBinaryPresentation(bytes, file).toString(),
+                    fingerprint(bytes, Files.getLastModifiedTime(path).toMillis()),
+                )
+            }.getOrNull()
+        }
+
+        // IntelliJ's platform tests and some non-local VirtualFile implementations have no NIO
+        // path. Their VFS bytes are still the authoritative backing content.
+        return runCatching {
+            val bytes = file.contentsToByteArray()
+            DiskSnapshot(
+                LoadTextUtil.getTextByBinaryPresentation(bytes, file).toString(),
+                fingerprint(bytes, file.timeStamp),
+            )
+        }.getOrNull()
+    }
+
+    private fun fingerprint(bytes: ByteArray, lastModified: Long): DiskFingerprint =
+        DiskFingerprint(
+            lastModified = lastModified,
+            size = bytes.size.toLong(),
+            sha256 = Base64.getEncoder().encodeToString(
+                MessageDigest.getInstance("SHA-256").digest(bytes),
+            ),
+        )
+
+    private fun parsePageMarkdown(payload: String): PageEdit? {
+        val separator = payload.indexOf('\n')
+        if (separator < 0) {
+            return null
+        }
+        val revision = payload.substring(0, separator).toLongOrNull() ?: return null
+        return PageEdit(revision, payload.substring(separator + 1))
+    }
 
     companion object {
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
@@ -294,6 +420,17 @@ class MilkJBridge(
     private data class WriteBaseline(
         val documentModificationStamp: Long,
         val fileModificationStamp: Long,
-        val diskLastModified: Long,
+        val diskFingerprint: DiskFingerprint,
+        val pageRevision: Long,
     )
+
+    private data class DiskFingerprint(
+        val lastModified: Long,
+        val size: Long,
+        val sha256: String,
+    )
+
+    private data class DiskSnapshot(val text: String, val fingerprint: DiskFingerprint)
+
+    private data class PageEdit(val revision: Long, val markdown: String)
 }

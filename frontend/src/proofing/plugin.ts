@@ -1,9 +1,14 @@
-import type { Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
+import type { Mark, Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { extractLintBatches, mapCorrection } from "./extract";
 import { HarperEngine, resolveDialect, type ResolvedDialect } from "./harper";
 import type { LintBatch, MappedIssue, ProofingDialect, ProofingStatus } from "./types";
+
+export interface ProofingEngine {
+  lint(text: string, dialect: ResolvedDialect): ReturnType<HarperEngine["lint"]>;
+  dispose(): Promise<void>;
+}
 
 interface PluginState {
   decorations: DecorationSet;
@@ -18,14 +23,14 @@ interface ProofingMeta {
 
 interface ControllerOptions {
   onUserEdit: () => void;
-  engine?: HarperEngine;
+  engine?: ProofingEngine;
 }
 
 const DEBOUNCE_MS = 600;
 
 export class ProofingController {
   private readonly key = new PluginKey<PluginState>("milkj-proofing");
-  private readonly engine: HarperEngine;
+  private readonly engine: ProofingEngine;
   private view: EditorView | undefined;
   private enabled = true;
   private dialect: ProofingDialect = "AUTO";
@@ -36,7 +41,7 @@ export class ProofingController {
   private attachment = 0;
   private popup: HTMLElement | undefined;
   private issueSequence = 0;
-  private cache = new Map<string, Awaited<ReturnType<HarperEngine["lint"]>>>();
+  private cache = new Map<string, Awaited<ReturnType<ProofingEngine["lint"]>>>();
   private nativeSpellcheck: string | null = null;
 
   constructor(private readonly options: ControllerOptions) {
@@ -115,7 +120,7 @@ export class ProofingController {
     return {
       update: (nextView: EditorView, previousState: EditorState) => {
         this.view = nextView;
-        if (!nextView.state.doc.eq(previousState.doc)) {
+        if (nextView.state.doc !== previousState.doc) {
           this.invalidate();
           this.closePopup();
           this.schedule();
@@ -168,6 +173,7 @@ export class ProofingController {
     let failed = false;
     for (const batch of batches) {
       const result = await this.lintBatch(batch, resolvedDialect);
+      if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect)) return;
       if (result.error) {
         failed = true;
         break;
@@ -177,19 +183,16 @@ export class ProofingController {
         if (issue) issues.push(issue);
       }
     }
-    if (
-      generation !== this.generation ||
-      attachment !== this.attachment ||
-      view !== this.view ||
-      !this.enabled ||
-      view.state.doc !== doc ||
-      resolveDialect(this.dialect) !== resolvedDialect
-    ) return;
+    if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect)) return;
+    if (failed) {
+      this.dispatchMeta({ status: "error" });
+      return;
+    }
     const deduplicated = [...new Map(issues.map((issue) => [
-      `${issue.from}:${issue.to}:${issue.correction ?? ""}:${issue.types.join(",")}`,
+      JSON.stringify([issue.from, issue.to, issue.correction, issue.types]),
       issue,
     ])).values()];
-    this.dispatchMeta({ issues: deduplicated, status: failed ? "error" : "ready" });
+    this.dispatchMeta({ issues: deduplicated, status: "ready" });
   }
 
   private lintBatch(batch: LintBatch, dialect: ResolvedDialect) {
@@ -214,7 +217,8 @@ export class ProofingController {
     const target = event.target as HTMLElement | null;
     if (!view || !target) return;
     let issue: MappedIssue | undefined;
-    const widgetId = target.closest<HTMLElement>("[data-milkj-proofing-id]")?.dataset.milkjProofingId;
+    const widgetId = target.closest<HTMLElement>(".milkj-proofing-widget[data-milkj-proofing-id]")
+      ?.dataset.milkjProofingId;
     const state = this.key.getState(view.state);
     if (!state) return;
     if (widgetId) {
@@ -248,19 +252,33 @@ export class ProofingController {
     const category = document.createElement("div");
     category.className = "milkj-proofing-popup__category";
     category.textContent = friendlyType(issue.types[0]);
-    const explanation = document.createElement("div");
-    explanation.className = "milkj-proofing-popup__explanation";
-    explanation.textContent = issue.explanation || "Harper found a possible issue.";
-    popup.append(category, explanation);
+    popup.append(category);
+    // Harper's spelling explanation ("Did you mean to spell X this way?") only repeats the
+    // replacement button immediately below it. Keep explanations for grammar/style issues, where
+    // they add useful context, but make spelling suggestions compact.
+    if (!typeClass(issue.types[0]).endsWith("spelling")) {
+      const explanation = document.createElement("div");
+      explanation.className = "milkj-proofing-popup__explanation";
+      explanation.textContent = issue.explanation || "Harper found a possible issue.";
+      popup.append(explanation);
+    }
+    const applicableSuggestions = issue.suggestions.filter(({ replacement }) =>
+      canApplyReplacement(view.state.doc, found.from, found.to, replacement),
+    );
     if (!issue.suggestions.length) {
       const info = document.createElement("div");
       info.className = "milkj-proofing-popup__empty";
       info.textContent = "No automatic suggestion is available.";
       popup.append(info);
+    } else if (!this.readonly && !applicableSuggestions.length) {
+      const info = document.createElement("div");
+      info.className = "milkj-proofing-popup__empty";
+      info.textContent = "This suggestion crosses formatting boundaries and cannot be applied safely.";
+      popup.append(info);
     } else if (!this.readonly) {
       const actions = document.createElement("div");
       actions.className = "milkj-proofing-popup__actions";
-      for (const { replacement } of issue.suggestions) {
+      for (const { replacement } of applicableSuggestions) {
         const button = document.createElement("button");
         button.type = "button";
         button.textContent = replacement || "Remove";
@@ -283,9 +301,28 @@ export class ProofingController {
   private applySuggestion(id: string, replacement: string): void {
     const view = this.view;
     const found = findIssueById(view && this.key.getState(view.state)?.decorations, id);
-    if (!view || !found || this.readonly) return this.closePopup();
+    if (
+      !view ||
+      !found ||
+      this.readonly ||
+      !canApplyReplacement(view.state.doc, found.from, found.to, replacement)
+    ) return this.closePopup();
     this.options.onUserEdit();
-    view.dispatch(view.state.tr.insertText(replacement, found.from, found.to).scrollIntoView());
+    let tr = view.state.tr;
+    if (!replacement) {
+      tr = tr.delete(found.from, found.to);
+    } else if (found.from === found.to) {
+      tr = tr.insertText(replacement, found.from);
+    } else {
+      const marks = uniformMarks(view.state.doc, found.from, found.to);
+      if (!marks) return this.closePopup();
+      tr = tr.replaceWith(
+        found.from,
+        found.to,
+        view.state.schema.text(replacement, [...marks]),
+      );
+    }
+    view.dispatch(tr.scrollIntoView());
     view.focus();
     this.closePopup();
   }
@@ -313,6 +350,21 @@ export class ProofingController {
     this.timer = undefined;
   }
 
+  private isCurrentCheck(
+    view: EditorView,
+    doc: ProseMirrorNode,
+    generation: number,
+    attachment: number,
+    dialect: ResolvedDialect,
+  ): boolean {
+    return generation === this.generation &&
+      attachment === this.attachment &&
+      view === this.view &&
+      this.enabled &&
+      view.state.doc === doc &&
+      resolveDialect(this.dialect) === dialect;
+  }
+
   private dispatchMeta(meta: ProofingMeta): void {
     const view = this.view;
     if (view) view.dispatch(view.state.tr.setMeta(this.key, meta));
@@ -328,6 +380,32 @@ export class ProofingController {
     if (this.nativeSpellcheck === null) view.dom.removeAttribute("spellcheck");
     else view.dom.setAttribute("spellcheck", this.nativeSpellcheck);
   }
+}
+
+export function canApplyReplacement(
+  doc: ProseMirrorNode,
+  from: number,
+  to: number,
+  replacement: string,
+): boolean {
+  if (!replacement || from === to) return true;
+  return uniformMarks(doc, from, to) !== null;
+}
+
+function uniformMarks(doc: ProseMirrorNode, from: number, to: number): readonly Mark[] | null {
+  let reference: readonly Mark[] | undefined;
+  let uniform = true;
+  doc.nodesBetween(from, to, (node) => {
+    if (!uniform || !node.isText) return;
+    if (!reference) {
+      reference = node.marks;
+      return;
+    }
+    if (reference.length !== node.marks.length || reference.some((mark, index) => !mark.eq(node.marks[index]!))) {
+      uniform = false;
+    }
+  });
+  return uniform ? (reference ?? []) : null;
 }
 
 function decorationsFor(doc: ProseMirrorNode, issues: MappedIssue[]): DecorationSet {
