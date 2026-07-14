@@ -13,6 +13,17 @@ const DIALECTS: Record<Exclude<ProofingDialect, "AUTO">, Dialect> = {
 
 export type ResolvedDialect = Exclude<ProofingDialect, "AUTO">;
 
+export interface HarperLinter {
+  setup(): Promise<void>;
+  lint(text: string, options?: { language?: "plaintext" }): Promise<Lint[]>;
+  clearWords(): Promise<void>;
+  importWords(words: string[]): Promise<void>;
+  setDialect(dialect: Dialect): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export type HarperLinterFactory = (dialect: Dialect) => HarperLinter;
+
 export function resolveDialect(dialect: ProofingDialect, language = navigator.language): ResolvedDialect {
   if (dialect !== "AUTO") return dialect;
   const region = language.split(/[-_]/)[1]?.toUpperCase();
@@ -24,23 +35,42 @@ export function resolveDialect(dialect: ProofingDialect, language = navigator.la
 }
 
 export class HarperEngine {
-  private worker: WorkerLinter | undefined;
+  private worker: HarperLinter | undefined;
   private dialect: ResolvedDialect | undefined;
+  private dictionaryFingerprint: string | undefined;
   private tail: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
-  lint(text: string, dialect: ResolvedDialect): Promise<HarperEngineResult> {
+  constructor(
+    private readonly createLinter: HarperLinterFactory =
+      (dialect) => new WorkerLinter({ binary, dialect }),
+  ) {}
+
+  lint(
+    text: string,
+    dialect: ResolvedDialect,
+    dictionary: readonly string[],
+  ): Promise<HarperEngineResult> {
+    const words = [...dictionary];
+    const fingerprint = JSON.stringify(words);
     return this.enqueue(async () => {
       if (this.disposed) return { corrections: [], error: "Harper has been disposed" };
       let lints: Lint[] = [];
       try {
         if (!this.worker) {
-          this.worker = new WorkerLinter({ binary, dialect: DIALECTS[dialect] });
+          this.worker = this.createLinter(DIALECTS[dialect]);
           await this.worker.setup();
           this.dialect = dialect;
+          this.dictionaryFingerprint = undefined;
         } else if (this.dialect !== dialect) {
           await this.worker.setDialect(DIALECTS[dialect]);
           this.dialect = dialect;
+          this.dictionaryFingerprint = undefined;
+        }
+        if (this.dictionaryFingerprint !== fingerprint) {
+          await this.worker.clearWords();
+          if (words.length) await this.worker.importWords(words);
+          this.dictionaryFingerprint = fingerprint;
         }
         lints = await this.worker.lint(text, { language: "plaintext" });
         return { corrections: normalizeHarperLints(text, lints) };
@@ -50,6 +80,7 @@ export class HarperEngine {
         const failedWorker = this.worker;
         this.worker = undefined;
         this.dialect = undefined;
+        this.dictionaryFingerprint = undefined;
         try { await failedWorker?.dispose(); } catch { /* preserve the lint error */ }
         return { corrections: [], error: message };
       } finally {
@@ -66,6 +97,8 @@ export class HarperEngine {
     await this.tail.catch(() => undefined);
     const worker = this.worker;
     this.worker = undefined;
+    this.dialect = undefined;
+    this.dictionaryFingerprint = undefined;
     if (worker) await worker.dispose();
   }
 

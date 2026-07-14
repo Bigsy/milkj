@@ -10,6 +10,10 @@
     Milkdown inside an embedded JCEF browser. It appears as an editor tab right next to IntelliJ's
     built-in Markdown editor &mdash; write in WYSIWYG, then switch back to the native source/preview
     editor whenever you like.
+    <br/><br/>
+    Built-in Harper spell checking highlights mistakes as you write and includes an application-wide,
+    persistent custom dictionary. Add project names and specialist terms directly from the correction
+    popup, or manage the complete dictionary in MilkJ settings.
     ]]></description>
 
     <!-- Product / plugin compatibility. No dependency on the bundled Markdown plugin: MilkJ matches
@@ -22,6 +26,13 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.8</b>
+    <ul>
+        <li>Added Harper spell checking for rendered Markdown.</li>
+        <li>Added a persistent custom dictionary, with quick-add actions in the correction popup and full management in MilkJ settings.</li>
+        <li>Dictionary changes automatically update every open MilkJ editor.</li>
+    </ul>
+    <br/>
     <b>0.1.7</b>
     <ul>
         <li>No more spurious "File Cache Conflict" dialogs: MilkJ no longer writes into the document unless you actually edited in the MilkJ tab.</li>

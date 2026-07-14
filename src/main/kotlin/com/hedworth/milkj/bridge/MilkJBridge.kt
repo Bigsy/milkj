@@ -1,6 +1,7 @@
 package com.hedworth.milkj.bridge
 
 import com.hedworth.milkj.settings.MilkJSettings
+import com.hedworth.milkj.settings.normalizeDictionary
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
@@ -26,6 +27,8 @@ import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
 import org.jetbrains.annotations.TestOnly
 import java.nio.file.Files
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Base64
 
@@ -168,6 +171,14 @@ class MilkJBridge(
                     parsePageMarkdown(message.removePrefix("markdown:"))?.let { pageEdit ->
                         scheduleDocumentWrite(pageEdit)
                     }
+                }
+                message.startsWith("dictionary:add:") && pageReady -> {
+                    runCatching {
+                        URLDecoder.decode(
+                            message.removePrefix("dictionary:add:"),
+                            StandardCharsets.UTF_8,
+                        )
+                    }.getOrNull()?.let(settings::addDictionaryWord)
                 }
             }
         }
@@ -408,6 +419,12 @@ class MilkJBridge(
                 append("\"placeholder\":").append(state.placeholderText.toJsonString()).append(",")
                 append("\"proofingEnabled\":").append(state.spellcheckEnabled).append(",")
                 append("\"proofingDialect\":").append(state.proofingDialect.name.toJsonString()).append(",")
+                append("\"customDictionary\":[")
+                normalizeDictionary(state.customDictionary).forEachIndexed { index, word ->
+                    if (index > 0) append(",")
+                    append(word.toJsonString())
+                }
+                append("],")
                 append("\"readonly\":").append(readonly)
                 append("}")
             }

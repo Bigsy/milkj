@@ -52,6 +52,7 @@ interface MilkJConfig {
   readonly?: boolean;
   proofingEnabled: boolean;
   proofingDialect: ProofingDialect;
+  customDictionary: string[];
 }
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -114,6 +115,9 @@ const findBar = installFindBar({
 
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
+  onAddDictionaryWord: (word) => {
+    window.milkjSendToIde?.(`dictionary:add:${encodeURIComponent(word)}`);
+  },
 });
 window.addEventListener("pagehide", () => {
   void proofingController.dispose();
@@ -301,7 +305,12 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
   currentReadonly = config.readonly === true;
   crepe?.setReadonly(currentReadonly);
   findBar.setReadonly(currentReadonly);
-  proofingController.configure(config.proofingEnabled, config.proofingDialect, currentReadonly);
+  proofingController.configure(
+    config.proofingEnabled,
+    config.proofingDialect,
+    currentReadonly,
+    config.customDictionary,
+  );
   applyChrome();
   // The placeholder is baked into the editor at creation, and Mermaid bakes its theme into each
   // rendered SVG (previews only re-render when their code block's content changes) — either

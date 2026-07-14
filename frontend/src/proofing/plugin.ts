@@ -2,11 +2,16 @@ import type { Mark, Node as ProseMirrorNode } from "@milkdown/kit/prose/model";
 import { Plugin, PluginKey, type EditorState, type Transaction } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet, type EditorView } from "@milkdown/kit/prose/view";
 import { extractLintBatches, mapCorrection } from "./extract";
+import { dictionaryCandidate, normalizeDictionary } from "./dictionary";
 import { HarperEngine, resolveDialect, type ResolvedDialect } from "./harper";
 import type { LintBatch, MappedIssue, ProofingDialect, ProofingStatus } from "./types";
 
 export interface ProofingEngine {
-  lint(text: string, dialect: ResolvedDialect): ReturnType<HarperEngine["lint"]>;
+  lint(
+    text: string,
+    dialect: ResolvedDialect,
+    dictionary: readonly string[],
+  ): ReturnType<HarperEngine["lint"]>;
   dispose(): Promise<void>;
 }
 
@@ -23,6 +28,7 @@ interface ProofingMeta {
 
 interface ControllerOptions {
   onUserEdit: () => void;
+  onAddDictionaryWord: (word: string) => void;
   engine?: ProofingEngine;
 }
 
@@ -35,6 +41,8 @@ export class ProofingController {
   private enabled = true;
   private dialect: ProofingDialect = "AUTO";
   private readonly = false;
+  private dictionary: string[] = [];
+  private dictionaryFingerprint = "[]";
   private active = false;
   private generation = 0;
   private timer: number | undefined;
@@ -48,11 +56,22 @@ export class ProofingController {
     this.engine = options.engine ?? new HarperEngine();
   }
 
-  configure(enabled: boolean, dialect: ProofingDialect, readonly: boolean): void {
-    const proofingChanged = enabled !== this.enabled || dialect !== this.dialect;
+  configure(
+    enabled: boolean,
+    dialect: ProofingDialect,
+    readonly: boolean,
+    dictionary: unknown = [],
+  ): void {
+    const normalizedDictionary = normalizeDictionary(dictionary);
+    const dictionaryFingerprint = JSON.stringify(normalizedDictionary);
+    const proofingChanged = enabled !== this.enabled ||
+      dialect !== this.dialect ||
+      dictionaryFingerprint !== this.dictionaryFingerprint;
     this.enabled = enabled;
     this.dialect = dialect;
     this.readonly = readonly;
+    this.dictionary = normalizedDictionary;
+    this.dictionaryFingerprint = dictionaryFingerprint;
     this.syncNativeSpellcheck();
     if (!proofingChanged) return;
     this.invalidate();
@@ -163,6 +182,8 @@ export class ProofingController {
     const generation = ++this.generation;
     const attachment = this.attachment;
     const resolvedDialect = resolveDialect(this.dialect);
+    const dictionary = [...this.dictionary];
+    const dictionaryFingerprint = this.dictionaryFingerprint;
     const batches = extractLintBatches(doc);
     if (!batches.length) {
       this.dispatchMeta({ issues: [], status: "ready" });
@@ -172,8 +193,8 @@ export class ProofingController {
     const issues: MappedIssue[] = [];
     let failed = false;
     for (const batch of batches) {
-      const result = await this.lintBatch(batch, resolvedDialect);
-      if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect)) return;
+      const result = await this.lintBatch(batch, resolvedDialect, dictionary, dictionaryFingerprint);
+      if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect, dictionaryFingerprint)) return;
       if (result.error) {
         failed = true;
         break;
@@ -183,7 +204,7 @@ export class ProofingController {
         if (issue) issues.push(issue);
       }
     }
-    if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect)) return;
+    if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect, dictionaryFingerprint)) return;
     if (failed) {
       this.dispatchMeta({ status: "error" });
       return;
@@ -195,15 +216,20 @@ export class ProofingController {
     this.dispatchMeta({ issues: deduplicated, status: "ready" });
   }
 
-  private lintBatch(batch: LintBatch, dialect: ResolvedDialect) {
-    const key = `${dialect}\u0000${batch.text}`;
+  private lintBatch(
+    batch: LintBatch,
+    dialect: ResolvedDialect,
+    dictionary: readonly string[],
+    dictionaryFingerprint: string,
+  ) {
+    const key = `${dialect}\u0000${dictionaryFingerprint}\u0000${batch.text}`;
     const cached = this.cache.get(key);
     if (cached) {
       this.cache.delete(key);
       this.cache.set(key, cached);
       return Promise.resolve(cached);
     }
-    return this.engine.lint(batch.text, dialect).then((result) => {
+    return this.engine.lint(batch.text, dialect, dictionary).then((result) => {
       if (!result.error) {
         this.cache.set(key, result);
         while (this.cache.size > 150) this.cache.delete(this.cache.keys().next().value!);
@@ -265,6 +291,10 @@ export class ProofingController {
     const applicableSuggestions = issue.suggestions.filter(({ replacement }) =>
       canApplyReplacement(view.state.doc, found.from, found.to, replacement),
     );
+    const currentIssue = { ...issue, from: found.from, to: found.to };
+    const currentText = view.state.doc.textBetween(found.from, found.to, "", "");
+    const addCandidate = dictionaryCandidate(currentText, currentIssue);
+    const canAddToDictionary = addCandidate !== null && !this.dictionary.includes(addCandidate);
     if (!issue.suggestions.length) {
       const info = document.createElement("div");
       info.className = "milkj-proofing-popup__empty";
@@ -275,9 +305,10 @@ export class ProofingController {
       info.className = "milkj-proofing-popup__empty";
       info.textContent = "This suggestion crosses formatting boundaries and cannot be applied safely.";
       popup.append(info);
-    } else if (!this.readonly) {
-      const actions = document.createElement("div");
-      actions.className = "milkj-proofing-popup__actions";
+    }
+    const actions = document.createElement("div");
+    actions.className = "milkj-proofing-popup__actions";
+    if (!this.readonly) {
       for (const { replacement } of applicableSuggestions) {
         const button = document.createElement("button");
         button.type = "button";
@@ -285,8 +316,16 @@ export class ProofingController {
         button.addEventListener("click", () => this.applySuggestion(issue.id, replacement));
         actions.append(button);
       }
-      popup.append(actions);
     }
+    if (canAddToDictionary) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "milkj-proofing-popup__dictionary";
+      button.textContent = `Add “${addCandidate}” to dictionary`;
+      button.addEventListener("click", () => this.addDictionaryWord(issue.id));
+      actions.append(button);
+    }
+    if (actions.childElementCount) popup.append(actions);
     document.body.append(popup);
     const coords = view.coordsAtPos(found.from);
     popup.style.left = `${Math.max(8, Math.min(coords.left, window.innerWidth - popup.offsetWidth - 8))}px`;
@@ -296,6 +335,18 @@ export class ProofingController {
     window.addEventListener("keydown", this.onEscape, { capture: true });
     window.addEventListener("scroll", this.onViewportChange, { capture: true });
     window.addEventListener("resize", this.onViewportChange);
+  }
+
+  private addDictionaryWord(id: string): void {
+    const view = this.view;
+    const found = findIssueById(view && this.key.getState(view.state)?.decorations, id);
+    if (!view || !found) return this.closePopup();
+    const currentIssue = { ...found.issue, from: found.from, to: found.to };
+    const currentText = view.state.doc.textBetween(found.from, found.to, "", "");
+    const candidate = dictionaryCandidate(currentText, currentIssue);
+    if (!candidate || this.dictionary.includes(candidate)) return this.closePopup();
+    this.options.onAddDictionaryWord(candidate);
+    this.closePopup();
   }
 
   private applySuggestion(id: string, replacement: string): void {
@@ -356,13 +407,15 @@ export class ProofingController {
     generation: number,
     attachment: number,
     dialect: ResolvedDialect,
+    dictionaryFingerprint: string,
   ): boolean {
     return generation === this.generation &&
       attachment === this.attachment &&
       view === this.view &&
       this.enabled &&
       view.state.doc === doc &&
-      resolveDialect(this.dialect) === dialect;
+      resolveDialect(this.dialect) === dialect &&
+      this.dictionaryFingerprint === dictionaryFingerprint;
   }
 
   private dispatchMeta(meta: ProofingMeta): void {

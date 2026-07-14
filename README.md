@@ -11,6 +11,7 @@ Open a Markdown file as usual and switch to the **MilkJ** tab to edit with a cle
 - Rich-text Markdown editing powered by Milkdown and Crepe.
 - Native JetBrains editor tab integration for `.md` and `.markdown` files.
 - Two-way sync with the IntelliJ document model, so edits flow between MilkJ and the built-in Markdown editor.
+- Harper spell checking with correction suggestions and an application-wide persistent custom dictionary.
 - Mermaid diagram previews for `mermaid` fenced code blocks.
 - Mermaid language support in the code-block language picker.
 - Math rendering via Crepe's built-in LaTeX support.

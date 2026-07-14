@@ -16,6 +16,24 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
  */
 class MilkJBridgeTest : BasePlatformTestCase() {
 
+    private lateinit var settings: MilkJSettings
+    private lateinit var originalSettings: MilkJSettings.State
+
+    override fun setUp() {
+        super.setUp()
+        settings = MilkJSettings.getInstance()
+        originalSettings = settings.state.copy()
+        settings.loadState(MilkJSettings.State())
+    }
+
+    override fun tearDown() {
+        try {
+            settings.loadState(originalSettings)
+        } finally {
+            super.tearDown()
+        }
+    }
+
     private class FakeBrowserConnection : MilkJBrowserConnection {
         val executedScripts = mutableListOf<String>()
         var pageMessageHandler: ((String) -> Unit)? = null
@@ -276,6 +294,42 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertTrue(json.contains("\"proofingDialect\":\"AUTO\""))
     }
 
+    fun testFrontendConfigJsonEscapesCustomDictionary() {
+        val state = MilkJSettings.State().apply {
+            customDictionary = mutableListOf("C++", "MilkJ's", "quote\"slash\\", "Ångström")
+        }
+        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
+        assertTrue(json.contains("\"customDictionary\":[\"C++\",\"MilkJ's\",\"quote\\\"slash\\\\\",\"Ångström\"]"))
+    }
+
+    fun testEncodedDictionaryMessagePersistsWithoutModifyingDocument() {
+        setUpBridge("original\n")
+        sendFromPage("ready")
+        val wasUnsaved = isDocumentUnsaved()
+        connection.executedScripts.clear()
+
+        sendFromPage("dictionary:add:C%2B%2B")
+
+        assertEquals(listOf("C++"), settings.state.customDictionary)
+        assertEquals("original\n", document.text)
+        assertEquals(wasUnsaved, isDocumentUnsaved())
+        assertTrue(connection.executedScripts.any {
+            it.startsWith("window.milkjApplyConfig") && it.contains("\"customDictionary\":[\"C++\"]")
+        })
+        assertFalse(connection.executedScripts.any { it.startsWith("window.milkjSetMarkdown") })
+    }
+
+    fun testInvalidMalformedAndPreReadyDictionaryMessagesAreIgnored() {
+        setUpBridge("original\n")
+        sendFromPage("dictionary:add:Proofly")
+        sendFromPage("ready")
+        sendFromPage("dictionary:add:%ZZ")
+        sendFromPage("dictionary:add:two%20words")
+        sendFromPage("dictionary:add:${"x".repeat(65)}")
+        assertEmpty(settings.state.customDictionary)
+        assertEquals("original\n", document.text)
+    }
+
     fun testFrontendConfigJsonCarriesDisabledProofingIndependentlyFromReadonly() {
         val state = MilkJSettings.State().apply {
             spellcheckEnabled = false
@@ -301,9 +355,13 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         val state = MilkJSettings.State().apply {
             spellcheckEnabled = false
             proofingDialect = MilkJSettings.ProofingDialect.CANADIAN
+            customDictionary = mutableListOf("MilkJ")
         }
         val copy = state.copy()
         assertFalse(copy.spellcheckEnabled)
         assertEquals(MilkJSettings.ProofingDialect.CANADIAN, copy.proofingDialect)
+        assertEquals(listOf("MilkJ"), copy.customDictionary)
+        state.customDictionary += "Proofly"
+        assertEquals(listOf("MilkJ"), copy.customDictionary)
     }
 }

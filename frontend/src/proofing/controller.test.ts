@@ -37,8 +37,9 @@ function createHarness(
   engine: ProofingEngine,
   content: string | ProseMirrorNode = "one wierd ending",
   onUserEdit: () => void = vi.fn(),
+  onAddDictionaryWord: (word: string) => void = vi.fn(),
 ) {
-  const controller = new ProofingController({ onUserEdit, engine });
+  const controller = new ProofingController({ onUserEdit, onAddDictionaryWord, engine });
   const state = EditorState.create({
     doc: typeof content === "string" ? doc(content) : content,
     plugins: [controller.createPlugin()],
@@ -83,6 +84,38 @@ describe("proofing controller lifecycle", () => {
     activate(view);
     await vi.advanceTimersByTimeAsync(0);
     expect(engine.lint).toHaveBeenCalledTimes(1);
+    view.destroy();
+    await controller.dispose();
+  });
+
+  it("stores dictionary configuration lazily and passes it to the first lint", async () => {
+    vi.useFakeTimers();
+    const engine = mockEngine([{ corrections: [] }]);
+    const { controller, view } = createHarness(engine);
+    controller.configure(true, "AUTO", false, [" Proofly ", "MilkJ"]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(engine.lint).not.toHaveBeenCalled();
+    activate(view);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.lint).toHaveBeenCalledWith(expect.any(String), expect.any(String), ["MilkJ", "Proofly"]);
+    view.destroy();
+    await controller.dispose();
+  });
+
+  it("invalidates in-flight results and re-lints when the dictionary changes", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<HarperEngineResult>();
+    const engine = mockEngine([pending.promise, { corrections: [] }]);
+    const { controller, view } = createHarness(engine);
+    activate(view);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.configure(true, "AUTO", false, ["wierd"]);
+    await vi.advanceTimersByTimeAsync(600);
+    pending.resolve(correction());
+    await Promise.resolve();
+    expect(engine.lint).toHaveBeenCalledTimes(2);
+    expect(engine.lint.mock.calls[1]?.[2]).toEqual(["wierd"]);
+    expect(view.dom.querySelectorAll(".milkj-proofing-issue")).toHaveLength(0);
     view.destroy();
     await controller.dispose();
   });
@@ -170,7 +203,7 @@ describe("proofing controller lifecycle", () => {
     await controller.dispose();
   });
 
-  it("does not render replacement actions in readonly mode", async () => {
+  it("hides replacements but permits dictionary actions in readonly mode", async () => {
     vi.useFakeTimers();
     const engine = mockEngine([correction()]);
     const { controller, view } = createHarness(engine);
@@ -182,7 +215,32 @@ describe("proofing controller lifecycle", () => {
     view.dom.querySelector<HTMLElement>(".milkj-proofing-issue")!
       .dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 1, clientY: 1 }));
     expect(document.querySelector(".milkj-proofing-popup")).not.toBeNull();
-    expect(document.querySelector(".milkj-proofing-popup__actions")).toBeNull();
+    expect(document.querySelectorAll(".milkj-proofing-popup__actions button")).toHaveLength(1);
+    expect(document.querySelector(".milkj-proofing-popup__dictionary")?.textContent)
+      .toBe("Add “wierd” to dictionary");
+    view.destroy();
+    await controller.dispose();
+  });
+
+  it("adds the exact current mapped word without editing the document", async () => {
+    vi.useFakeTimers();
+    const add = vi.fn();
+    const userEdit = vi.fn();
+    const engine = mockEngine([correction()]);
+    const { controller, view } = createHarness(engine, "one wierd ending", userEdit, add);
+    activate(view);
+    await vi.advanceTimersByTimeAsync(0);
+    view.dispatch(view.state.tr.insertText("X", 1));
+    vi.spyOn(view, "posAtCoords").mockReturnValue({ pos: 7, inside: -1 });
+    vi.spyOn(view, "coordsAtPos").mockReturnValue({ left: 0, right: 10, top: 0, bottom: 10 });
+    view.dom.querySelector<HTMLElement>(".milkj-proofing-issue")!
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 1, clientY: 1 }));
+    const dispatch = vi.spyOn(view, "dispatch");
+    document.querySelector<HTMLButtonElement>(".milkj-proofing-popup__dictionary")!.click();
+    expect(add).toHaveBeenCalledWith("wierd");
+    expect(userEdit).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(view.state.doc.textContent).toBe("Xone wierd ending");
     view.destroy();
     await controller.dispose();
   });
