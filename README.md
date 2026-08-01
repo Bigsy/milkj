@@ -36,6 +36,16 @@ MilkJ settings are available under:
 
 From there you can choose the default Markdown editor, editor theme, Mermaid theme, and light/dark behavior. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
 
+## Release builds
+
+Prepare the leading entry in `src/main/resources/META-INF/plugin.xml` for the new release, then run:
+
+```shell
+make mint
+```
+
+This increments the patch component of `pluginVersion`, runs the frontend and plugin checks, and writes the Marketplace ZIP to `build/distributions/`. Use `make release` to rebuild the current version without incrementing it again.
+
 ## Notes
 
 MilkJ is designed to live alongside the built-in JetBrains Markdown editor rather than replace it. You can move between the rich-text MilkJ tab and the native Markdown editor whenever you need direct source editing.

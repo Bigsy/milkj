@@ -27,7 +27,7 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
-    <b>0.1.8</b>
+    <b>0.1.9</b>
     <ul>
         <li>Added Harper spell checking for rendered Markdown.</li>
         <li>Added a persistent custom dictionary, with quick-add actions in the correction popup and full management in MilkJ settings.</li>
