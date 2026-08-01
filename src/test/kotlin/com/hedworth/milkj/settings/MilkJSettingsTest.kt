@@ -115,7 +115,7 @@ class MilkJSettingsTest : BasePlatformTestCase() {
         assertEquals("UEsDBAoAAAAA", restored.weirpacks.single().data)
     }
 
-    fun testValidWeirpackRequiresManifestAndRule() {
+    fun testValidWeirpackRequiresManifestAndPayload() {
         val manifest = """{"author":"MilkJ","version":"1","description":"Test","license":"MIT"}"""
         assertNull(validateWeirpack(zip(
             "manifest.json" to manifest,
@@ -126,12 +126,18 @@ class MilkJSettingsTest : BasePlatformTestCase() {
             "manifest.json" to manifest,
             "rules/HouseStyle.weir" to "expr main teh",
         )))
+        // Dictionary-only packs (e.g. from weirsmith) are valid without any rules.
+        assertNull(validateWeirpack(zip(
+            "manifest.json" to manifest,
+            "annotations.json" to """{"affixes":{},"properties":{}}""",
+            "dictionary.dict" to "1\nmilkj\n",
+        )))
         assertEquals(
             "The Weirpack is missing manifest.json at its root.",
             validateWeirpack(zip("HouseStyle.weir" to "expr main teh")),
         )
         assertEquals(
-            "The Weirpack does not contain any .weir rules.",
+            "The Weirpack contains no .weir rules and no dictionary.dict.",
             validateWeirpack(zip("manifest.json" to "{}")),
         )
     }

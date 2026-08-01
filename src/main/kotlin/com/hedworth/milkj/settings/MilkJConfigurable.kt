@@ -323,7 +323,7 @@ class MilkJConfigurable : Configurable {
             }, BorderLayout.CENTER)
             add(JPanel(BorderLayout(0, 4)).apply {
                 add(buttons, BorderLayout.NORTH)
-                add(JBLabel("Import ZIP-based .weirpack archives containing custom Harper rules."), BorderLayout.CENTER)
+                add(JBLabel("Import ZIP-based .weirpack archives containing custom Harper rules or dictionaries."), BorderLayout.CENTER)
                 add(status, BorderLayout.SOUTH)
             }, BorderLayout.SOUTH)
         }

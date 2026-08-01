@@ -193,8 +193,12 @@ internal fun validateWeirpack(bytes: ByteArray): String? {
                 }
                 if (!entry.isDirectory) {
                     hasManifest = hasManifest || entry.name == "manifest.json"
-                    // harper-core accepts .weir rules at any depth, despite the docs saying "root".
-                    hasRule = hasRule || entry.name.endsWith(".weir", ignoreCase = true)
+                    // harper-core accepts .weir rules at any depth (case-sensitive, despite the
+                    // docs saying "root") and a root dictionary.dict; only the manifest is
+                    // mandatory, but a pack with neither payload would do nothing.
+                    hasPayload = hasPayload ||
+                        entry.name.endsWith(".weir") ||
+                        entry.name == "dictionary.dict"
                     while (true) {
                         val read = archive.read(buffer)
                         if (read < 0) break
@@ -210,7 +214,7 @@ internal fun validateWeirpack(bytes: ByteArray): String? {
         when {
             entryCount == 0 -> "The file is not a valid ZIP-based Weirpack."
             !hasManifest -> "The Weirpack is missing manifest.json at its root."
-            !hasRule -> "The Weirpack does not contain any .weir rules."
+            !hasPayload -> "The Weirpack contains no .weir rules and no dictionary.dict."
             else -> null
         }
     } catch (_: Exception) {
