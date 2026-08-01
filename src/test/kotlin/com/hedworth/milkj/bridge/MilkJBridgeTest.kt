@@ -1,6 +1,7 @@
 package com.hedworth.milkj.bridge
 
 import com.hedworth.milkj.settings.MilkJSettings
+import com.hedworth.milkj.settings.WeirpackSetting
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
@@ -302,6 +303,29 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertTrue(json.contains("\"customDictionary\":[\"C++\",\"MilkJ's\",\"quote\\\"slash\\\\\",\"Ångström\"]"))
     }
 
+    fun testFrontendConfigJsonCarriesOnlyEnabledWeirpacks() {
+        val state = MilkJSettings.State().apply {
+            customDictionary = mutableListOf("MilkJ")
+            weirpacks = mutableListOf(
+                WeirpackSetting().apply {
+                    name = "House style"
+                    data = "YWJj"
+                },
+                WeirpackSetting().apply {
+                    name = "Disabled"
+                    enabled = false
+                    data = "ZGVm"
+                },
+            )
+        }
+
+        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
+
+        assertTrue(json.contains("\"customDictionary\":[\"MilkJ\"]"))
+        assertTrue(json.contains("\"weirpacks\":[\"YWJj\"]"))
+        assertFalse(json.contains("ZGVm"))
+    }
+
     fun testEncodedDictionaryMessagePersistsWithoutModifyingDocument() {
         setUpBridge("original\n")
         sendFromPage("ready")
@@ -356,12 +380,19 @@ class MilkJBridgeTest : BasePlatformTestCase() {
             spellcheckEnabled = false
             proofingDialect = MilkJSettings.ProofingDialect.CANADIAN
             customDictionary = mutableListOf("MilkJ")
+            weirpacks = mutableListOf(WeirpackSetting().apply {
+                name = "House style"
+                data = "YWJj"
+            })
         }
         val copy = state.copy()
         assertFalse(copy.spellcheckEnabled)
         assertEquals(MilkJSettings.ProofingDialect.CANADIAN, copy.proofingDialect)
         assertEquals(listOf("MilkJ"), copy.customDictionary)
+        assertEquals("YWJj", copy.weirpacks.single().data)
         state.customDictionary += "Proofly"
+        state.weirpacks.single().data = "changed"
         assertEquals(listOf("MilkJ"), copy.customDictionary)
+        assertEquals("YWJj", copy.weirpacks.single().data)
     }
 }

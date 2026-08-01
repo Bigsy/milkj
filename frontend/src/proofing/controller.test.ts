@@ -97,7 +97,27 @@ describe("proofing controller lifecycle", () => {
     expect(engine.lint).not.toHaveBeenCalled();
     activate(view);
     await vi.advanceTimersByTimeAsync(0);
-    expect(engine.lint).toHaveBeenCalledWith(expect.any(String), expect.any(String), ["MilkJ", "Proofly"]);
+    expect(engine.lint).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      ["MilkJ", "Proofly"],
+      [],
+    );
+    view.destroy();
+    await controller.dispose();
+  });
+
+  it("passes configured Weirpacks to Harper and re-lints when they change", async () => {
+    vi.useFakeTimers();
+    const engine = mockEngine([{ corrections: [] }, { corrections: [] }]);
+    const { controller, view } = createHarness(engine);
+    controller.configure(true, "AUTO", false, [], ["cGFjay0x"]);
+    activate(view);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.lint.mock.calls[0]?.[3]).toEqual(["cGFjay0x"]);
+    controller.configure(true, "AUTO", false, [], ["cGFjay0y"]);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(engine.lint.mock.calls[1]?.[3]).toEqual(["cGFjay0y"]);
     view.destroy();
     await controller.dispose();
   });

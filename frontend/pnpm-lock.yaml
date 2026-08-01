@@ -24,8 +24,8 @@ importers:
         specifier: 7.21.2
         version: 7.21.2
       harper.js:
-        specifier: 2.4.0
-        version: 2.4.0
+        specifier: 2.7.0
+        version: 2.7.0
       mermaid:
         specifier: 11.16.0
         version: 11.16.0
@@ -1171,8 +1171,8 @@ packages:
   hachure-fill@0.5.2:
     resolution: {integrity: sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg==}
 
-  harper.js@2.4.0:
-    resolution: {integrity: sha512-tFSoBJ9MfVoIVYBCrUXS0ovJr6uZ9l4HjGmpaEcsm7Ea/OnBf+LPSwgcVJUfHQVktMmuWyYXoV2ejUU1HnXkug==}
+  harper.js@2.7.0:
+    resolution: {integrity: sha512-INDnUMNJvQzv5Zv9lhgGuIRYNIpDvOXcieCbo5ED/dwn8V/02zVW5kKvU6jSJJHq1MpY0VDyg+5RjE7z5D+FeA==}
 
   has-symbols@1.1.0:
     resolution: {integrity: sha512-1cDNdwJ2Jaohmb3sg4OmKaMBwuC48sYni5HUw2DvsC8LjGTLK9h+eb1X6RyuOHe4hT0ULCW68iomhjUoKUqlPQ==}
@@ -3294,7 +3294,7 @@ snapshots:
 
   hachure-fill@0.5.2: {}
 
-  harper.js@2.4.0:
+  harper.js@2.7.0:
     dependencies:
       fflate: 0.8.3
 

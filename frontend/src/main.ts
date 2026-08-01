@@ -53,6 +53,7 @@ interface MilkJConfig {
   proofingEnabled: boolean;
   proofingDialect: ProofingDialect;
   customDictionary: string[];
+  weirpacks: string[];
 }
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -310,6 +311,7 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
     config.proofingDialect,
     currentReadonly,
     config.customDictionary,
+    config.weirpacks,
   );
   applyChrome();
   // The placeholder is baked into the editor at creation, and Mermaid bakes its theme into each

@@ -5,6 +5,8 @@ import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.util.messages.Topic
+import java.io.ByteArrayInputStream
+import java.util.zip.ZipInputStream
 
 @State(
     name = "MilkJSettings",
@@ -18,12 +20,14 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
     override fun loadState(state: State) {
         settingsState = state.copy().also {
             it.customDictionary = normalizeDictionary(it.customDictionary)
+            it.weirpacks = normalizeWeirpacks(it.weirpacks)
         }
     }
 
     fun update(newState: State) {
         settingsState = newState.copy().also {
             it.customDictionary = normalizeDictionary(it.customDictionary)
+            it.weirpacks = normalizeWeirpacks(it.weirpacks)
         }
         notifyChanged()
     }
@@ -55,6 +59,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var spellcheckEnabled: Boolean = true
         var proofingDialect: ProofingDialect = ProofingDialect.AUTO
         var customDictionary: MutableList<String> = mutableListOf()
+        var weirpacks: MutableList<WeirpackSetting> = mutableListOf()
 
         fun copy(): State =
             State().also {
@@ -67,6 +72,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.spellcheckEnabled = spellcheckEnabled
                 it.proofingDialect = proofingDialect
                 it.customDictionary = customDictionary.toMutableList()
+                it.weirpacks = weirpacks.map(WeirpackSetting::copy).toMutableList()
             }
     }
 
@@ -129,6 +135,19 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
     }
 }
 
+class WeirpackSetting {
+    var name: String = ""
+    var enabled: Boolean = true
+    var data: String = ""
+
+    fun copy(): WeirpackSetting =
+        WeirpackSetting().also {
+            it.name = name
+            it.enabled = enabled
+            it.data = data
+        }
+}
+
 internal fun isValidDictionaryWord(word: String): Boolean =
     word.isNotEmpty() &&
         word.length <= MilkJSettings.MAX_DICTIONARY_WORD_LENGTH &&
@@ -143,5 +162,64 @@ internal fun normalizeDictionary(values: Iterable<String>): MutableList<String> 
         .sorted()
         .toMutableList()
 
+internal fun normalizeWeirpacks(values: Iterable<WeirpackSetting>): MutableList<WeirpackSetting> =
+    values
+        .map { pack ->
+            pack.copy().also {
+                it.name = it.name.trim().ifEmpty { "Untitled Weirpack" }
+                it.data = it.data.trim()
+            }
+        }
+        .filter { it.data.isNotEmpty() }
+        .toMutableList()
+
+internal fun enabledWeirpacks(state: MilkJSettings.State): List<String> =
+    normalizeWeirpacks(state.weirpacks).filter(WeirpackSetting::enabled).map(WeirpackSetting::data)
+
+internal fun validateWeirpack(bytes: ByteArray): String? {
+    if (bytes.isEmpty()) return "The Weirpack is empty."
+    var hasManifest = false
+    var hasPayload = false
+    var entryCount = 0
+    var uncompressedBytes = 0L
+    return try {
+        ZipInputStream(ByteArrayInputStream(bytes)).use { archive ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val entry = archive.nextEntry ?: break
+                entryCount++
+                if (entryCount > MAX_WEIRPACK_ENTRIES) {
+                    return "The Weirpack contains too many files."
+                }
+                if (!entry.isDirectory) {
+                    hasManifest = hasManifest || entry.name == "manifest.json"
+                    // harper-core accepts .weir rules at any depth, despite the docs saying "root".
+                    hasRule = hasRule || entry.name.endsWith(".weir", ignoreCase = true)
+                    while (true) {
+                        val read = archive.read(buffer)
+                        if (read < 0) break
+                        uncompressedBytes += read
+                        if (uncompressedBytes > MAX_WEIRPACK_UNCOMPRESSED_BYTES) {
+                            return "The Weirpack expands beyond the 20 MB limit."
+                        }
+                    }
+                }
+                archive.closeEntry()
+            }
+        }
+        when {
+            entryCount == 0 -> "The file is not a valid ZIP-based Weirpack."
+            !hasManifest -> "The Weirpack is missing manifest.json at its root."
+            !hasRule -> "The Weirpack does not contain any .weir rules."
+            else -> null
+        }
+    } catch (_: Exception) {
+        "The file is not a valid ZIP-based Weirpack."
+    }
+}
+
 private fun String.trimDictionaryWhitespace(): String =
     trim { it.isWhitespace() || it == '\uFEFF' }
+
+private const val MAX_WEIRPACK_ENTRIES = 1_000
+private const val MAX_WEIRPACK_UNCOMPRESSED_BYTES = 20L * 1024L * 1024L

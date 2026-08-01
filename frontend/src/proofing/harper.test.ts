@@ -1,10 +1,10 @@
-import { Dialect, LocalLinter } from "harper.js";
+import { Dialect, LocalLinter, packWeirpackFiles } from "harper.js";
 import { binary } from "harper.js/binary";
 import { describe, expect, it, vi } from "vitest";
 import { normalizeHarperLints } from "./normalize";
 import { HarperEngine, resolveDialect, type HarperLinter } from "./harper";
 
-describe("Harper 2.4.0 integration", () => {
+describe("Harper 2.7.0 integration", () => {
   it("resolves automatic dialects from locale regions", () => {
     expect(resolveDialect("AUTO", "en-GB")).toBe("BRITISH");
     expect(resolveDialect("AUTO", "en-AU")).toBe("AUSTRALIAN");
@@ -63,6 +63,43 @@ describe("Harper 2.4.0 integration", () => {
       await linter.dispose();
     }
   }, 15_000);
+
+  it("loads a real Weirpack and applies its custom rule", async () => {
+    const linter = new LocalLinter({ binary, dialect: Dialect.American });
+    const bytes = packWeirpackFiles(new Map([
+      ["manifest.json", JSON.stringify({
+        author: "MilkJ",
+        version: "1.0.0",
+        description: "Test house style",
+        license: "MIT",
+      })],
+      ["Brand.weir", `
+expr main (G Suite)
+let message "Use the updated brand."
+let description "The product is now called Google Workspace."
+let kind "Style"
+let becomes "Google Workspace"
+let strategy "Exact"
+test "Use G Suite today." "Use Google Workspace today."
+`],
+    ]));
+    try {
+      expect(await linter.loadWeirpackFromBytes(bytes)).toBeUndefined();
+      const text = "Use G Suite today.";
+      const lints = await linter.lint(text, { language: "plaintext" });
+      try {
+        const corrections = normalizeHarperLints(text, lints);
+        expect(corrections.some((issue) =>
+          issue.startIndex === 4 &&
+          issue.suggestions.some(({ replacement }) => replacement === "Google Workspace"),
+        )).toBe(true);
+      } finally {
+        lints.forEach((lint) => lint.free());
+      }
+    } finally {
+      await linter.dispose();
+    }
+  }, 15_000);
 });
 
 describe("HarperEngine dictionary lifecycle", () => {
@@ -71,6 +108,7 @@ describe("HarperEngine dictionary lifecycle", () => {
       setup: vi.fn(async () => { calls.push("setup"); }),
       clearWords: vi.fn(async () => { calls.push("clearWords"); }),
       importWords: vi.fn(async (words: string[]) => { calls.push(`importWords:${words.join(",")}`); }),
+      loadWeirpackFromBytes: vi.fn(async () => { calls.push("loadWeirpack"); return undefined; }),
       setDialect: vi.fn(async () => { calls.push("setDialect"); }),
       lint: vi.fn(async (text: string) => { calls.push(`lint:${text}`); return []; }),
       dispose: vi.fn(async () => { calls.push("dispose"); }),
@@ -103,7 +141,22 @@ describe("HarperEngine dictionary lifecycle", () => {
     await engine.lint("one", "AMERICAN", ["MilkJ"]);
     calls.length = 0;
     await engine.lint("two", "BRITISH", ["MilkJ"]);
-    expect(calls).toEqual(["setDialect", "clearWords", "importWords:MilkJ", "lint:two"]);
+    expect(calls).toEqual([
+      "dispose", "setup", "clearWords", "importWords:MilkJ", "lint:two",
+    ]);
+    await engine.dispose();
+  });
+
+  it("recreates the linter when the Weirpack set changes", async () => {
+    const calls: string[] = [];
+    const engine = new HarperEngine(() => mockLinter(calls));
+    await engine.lint("one", "AMERICAN", [], ["YWJj"]);
+    expect(calls).toEqual(["setup", "clearWords", "loadWeirpack", "lint:one"]);
+    calls.length = 0;
+    await engine.lint("two", "AMERICAN", [], ["YWJj"]);
+    expect(calls).toEqual(["lint:two"]);
+    await engine.lint("three", "AMERICAN", [], []);
+    expect(calls.slice(1)).toEqual(["dispose", "setup", "clearWords", "lint:three"]);
     await engine.dispose();
   });
 

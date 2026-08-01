@@ -13,7 +13,8 @@
     <br/><br/>
     Built-in Harper spell checking highlights mistakes as you write and includes an application-wide,
     persistent custom dictionary. Add project names and specialist terms directly from the correction
-    popup, or manage the complete dictionary in MilkJ settings.
+    popup, manage the complete dictionary in MilkJ settings, and import Harper Weirpacks for custom
+    grammar and style rules.
     ]]></description>
 
     <!-- Product / plugin compatibility. No dependency on the bundled Markdown plugin: MilkJ matches
@@ -30,6 +31,7 @@
     <ul>
         <li>Added Harper spell checking for rendered Markdown.</li>
         <li>Added a persistent custom dictionary, with quick-add actions in the correction popup and full management in MilkJ settings.</li>
+        <li>Added import and management of Harper Weirpacks for custom grammar and style rules.</li>
         <li>Dictionary changes automatically update every open MilkJ editor.</li>
     </ul>
     <br/>

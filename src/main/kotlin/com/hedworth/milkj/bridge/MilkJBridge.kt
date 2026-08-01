@@ -1,6 +1,7 @@
 package com.hedworth.milkj.bridge
 
 import com.hedworth.milkj.settings.MilkJSettings
+import com.hedworth.milkj.settings.enabledWeirpacks
 import com.hedworth.milkj.settings.normalizeDictionary
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -423,6 +424,12 @@ class MilkJBridge(
                 normalizeDictionary(state.customDictionary).forEachIndexed { index, word ->
                     if (index > 0) append(",")
                     append(word.toJsonString())
+                }
+                append("],")
+                append("\"weirpacks\":[")
+                enabledWeirpacks(state).forEachIndexed { index, data ->
+                    if (index > 0) append(",")
+                    append(data.toJsonString())
                 }
                 append("],")
                 append("\"readonly\":").append(readonly)

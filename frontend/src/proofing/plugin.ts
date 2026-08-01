@@ -11,6 +11,7 @@ export interface ProofingEngine {
     text: string,
     dialect: ResolvedDialect,
     dictionary: readonly string[],
+    weirpacks?: readonly string[],
   ): ReturnType<HarperEngine["lint"]>;
   dispose(): Promise<void>;
 }
@@ -34,6 +35,11 @@ interface ControllerOptions {
 
 const DEBOUNCE_MS = 600;
 
+function normalizeWeirpacks(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+}
+
 export class ProofingController {
   private readonly key = new PluginKey<PluginState>("milkj-proofing");
   private readonly engine: ProofingEngine;
@@ -43,6 +49,8 @@ export class ProofingController {
   private readonly = false;
   private dictionary: string[] = [];
   private dictionaryFingerprint = "[]";
+  private weirpacks: string[] = [];
+  private weirpackFingerprint = "[]";
   private active = false;
   private generation = 0;
   private timer: number | undefined;
@@ -61,17 +69,23 @@ export class ProofingController {
     dialect: ProofingDialect,
     readonly: boolean,
     dictionary: unknown = [],
+    weirpacks: unknown = [],
   ): void {
     const normalizedDictionary = normalizeDictionary(dictionary);
     const dictionaryFingerprint = JSON.stringify(normalizedDictionary);
+    const normalizedWeirpacks = normalizeWeirpacks(weirpacks);
+    const weirpackFingerprint = JSON.stringify(normalizedWeirpacks);
     const proofingChanged = enabled !== this.enabled ||
       dialect !== this.dialect ||
-      dictionaryFingerprint !== this.dictionaryFingerprint;
+      dictionaryFingerprint !== this.dictionaryFingerprint ||
+      weirpackFingerprint !== this.weirpackFingerprint;
     this.enabled = enabled;
     this.dialect = dialect;
     this.readonly = readonly;
     this.dictionary = normalizedDictionary;
     this.dictionaryFingerprint = dictionaryFingerprint;
+    this.weirpacks = normalizedWeirpacks;
+    this.weirpackFingerprint = weirpackFingerprint;
     this.syncNativeSpellcheck();
     if (!proofingChanged) return;
     this.invalidate();
@@ -184,6 +198,8 @@ export class ProofingController {
     const resolvedDialect = resolveDialect(this.dialect);
     const dictionary = [...this.dictionary];
     const dictionaryFingerprint = this.dictionaryFingerprint;
+    const weirpacks = [...this.weirpacks];
+    const weirpackFingerprint = this.weirpackFingerprint;
     const batches = extractLintBatches(doc);
     if (!batches.length) {
       this.dispatchMeta({ issues: [], status: "ready" });
@@ -193,8 +209,23 @@ export class ProofingController {
     const issues: MappedIssue[] = [];
     let failed = false;
     for (const batch of batches) {
-      const result = await this.lintBatch(batch, resolvedDialect, dictionary, dictionaryFingerprint);
-      if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect, dictionaryFingerprint)) return;
+      const result = await this.lintBatch(
+        batch,
+        resolvedDialect,
+        dictionary,
+        dictionaryFingerprint,
+        weirpacks,
+        weirpackFingerprint,
+      );
+      if (!this.isCurrentCheck(
+        view,
+        doc,
+        generation,
+        attachment,
+        resolvedDialect,
+        dictionaryFingerprint,
+        weirpackFingerprint,
+      )) return;
       if (result.error) {
         failed = true;
         break;
@@ -204,7 +235,15 @@ export class ProofingController {
         if (issue) issues.push(issue);
       }
     }
-    if (!this.isCurrentCheck(view, doc, generation, attachment, resolvedDialect, dictionaryFingerprint)) return;
+    if (!this.isCurrentCheck(
+      view,
+      doc,
+      generation,
+      attachment,
+      resolvedDialect,
+      dictionaryFingerprint,
+      weirpackFingerprint,
+    )) return;
     if (failed) {
       this.dispatchMeta({ status: "error" });
       return;
@@ -221,15 +260,18 @@ export class ProofingController {
     dialect: ResolvedDialect,
     dictionary: readonly string[],
     dictionaryFingerprint: string,
+    weirpacks: readonly string[],
+    weirpackFingerprint: string,
   ) {
-    const key = `${dialect}\u0000${dictionaryFingerprint}\u0000${batch.text}`;
+    const key =
+      `${dialect}\u0000${dictionaryFingerprint}\u0000${weirpackFingerprint}\u0000${batch.text}`;
     const cached = this.cache.get(key);
     if (cached) {
       this.cache.delete(key);
       this.cache.set(key, cached);
       return Promise.resolve(cached);
     }
-    return this.engine.lint(batch.text, dialect, dictionary).then((result) => {
+    return this.engine.lint(batch.text, dialect, dictionary, weirpacks).then((result) => {
       if (!result.error) {
         this.cache.set(key, result);
         while (this.cache.size > 150) this.cache.delete(this.cache.keys().next().value!);
@@ -408,6 +450,7 @@ export class ProofingController {
     attachment: number,
     dialect: ResolvedDialect,
     dictionaryFingerprint: string,
+    weirpackFingerprint: string,
   ): boolean {
     return generation === this.generation &&
       attachment === this.attachment &&
@@ -415,7 +458,8 @@ export class ProofingController {
       this.enabled &&
       view.state.doc === doc &&
       resolveDialect(this.dialect) === dialect &&
-      this.dictionaryFingerprint === dictionaryFingerprint;
+      this.dictionaryFingerprint === dictionaryFingerprint &&
+      this.weirpackFingerprint === weirpackFingerprint;
   }
 
   private dispatchMeta(meta: ProofingMeta): void {

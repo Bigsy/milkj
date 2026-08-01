@@ -18,6 +18,7 @@ export interface HarperLinter {
   lint(text: string, options?: { language?: "plaintext" }): Promise<Lint[]>;
   clearWords(): Promise<void>;
   importWords(words: string[]): Promise<void>;
+  loadWeirpackFromBytes(bytes: Uint8Array | number[]): Promise<Record<string, unknown> | undefined>;
   setDialect(dialect: Dialect): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -38,6 +39,7 @@ export class HarperEngine {
   private worker: HarperLinter | undefined;
   private dialect: ResolvedDialect | undefined;
   private dictionaryFingerprint: string | undefined;
+  private weirpackFingerprint: string | undefined;
   private tail: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
@@ -50,29 +52,48 @@ export class HarperEngine {
     text: string,
     dialect: ResolvedDialect,
     dictionary: readonly string[],
+    weirpacks: readonly string[] = [],
   ): Promise<HarperEngineResult> {
     const words = [...dictionary];
-    const fingerprint = JSON.stringify(words);
+    const dictionaryFingerprint = JSON.stringify(words);
+    const weirpackFingerprint = JSON.stringify(weirpacks);
     return this.enqueue(async () => {
       if (this.disposed) return { corrections: [], error: "Harper has been disposed" };
       let lints: Lint[] = [];
       try {
-        if (!this.worker) {
-          this.worker = this.createLinter(DIALECTS[dialect]);
-          await this.worker.setup();
+        const recreateWorker = !this.worker ||
+          this.dialect !== dialect ||
+          this.weirpackFingerprint !== weirpackFingerprint ||
+          (weirpacks.length > 0 && this.dictionaryFingerprint !== dictionaryFingerprint);
+        if (recreateWorker) {
+          const previousWorker = this.worker;
+          this.worker = undefined;
+          try { await previousWorker?.dispose(); } catch { /* replace it regardless */ }
+          const worker = this.createLinter(DIALECTS[dialect]);
+          this.worker = worker;
+          await worker.setup();
           this.dialect = dialect;
-          this.dictionaryFingerprint = undefined;
-        } else if (this.dialect !== dialect) {
-          await this.worker.setDialect(DIALECTS[dialect]);
-          this.dialect = dialect;
-          this.dictionaryFingerprint = undefined;
+          await worker.clearWords();
+          if (words.length) await worker.importWords(words);
+          for (const encoded of weirpacks) {
+            const failures = await worker.loadWeirpackFromBytes(decodeBase64(encoded));
+            if (failures && Object.keys(failures).length > 0) {
+              throw new Error(
+                `Weirpack tests failed for: ${Object.keys(failures).join(", ")}`,
+              );
+            }
+          }
+          this.dictionaryFingerprint = dictionaryFingerprint;
+          this.weirpackFingerprint = weirpackFingerprint;
         }
-        if (this.dictionaryFingerprint !== fingerprint) {
-          await this.worker.clearWords();
-          if (words.length) await this.worker.importWords(words);
-          this.dictionaryFingerprint = fingerprint;
+        const worker = this.worker;
+        if (!worker) throw new Error("Harper failed to initialize");
+        if (!recreateWorker && this.dictionaryFingerprint !== dictionaryFingerprint) {
+          await worker.clearWords();
+          if (words.length) await worker.importWords(words);
+          this.dictionaryFingerprint = dictionaryFingerprint;
         }
-        lints = await this.worker.lint(text, { language: "plaintext" });
+        lints = await worker.lint(text, { language: "plaintext" });
         return { corrections: normalizeHarperLints(text, lints) };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -81,6 +102,7 @@ export class HarperEngine {
         this.worker = undefined;
         this.dialect = undefined;
         this.dictionaryFingerprint = undefined;
+        this.weirpackFingerprint = undefined;
         try { await failedWorker?.dispose(); } catch { /* preserve the lint error */ }
         return { corrections: [], error: message };
       } finally {
@@ -99,6 +121,7 @@ export class HarperEngine {
     this.worker = undefined;
     this.dialect = undefined;
     this.dictionaryFingerprint = undefined;
+    this.weirpackFingerprint = undefined;
     if (worker) await worker.dispose();
   }
 
@@ -107,4 +130,13 @@ export class HarperEngine {
     this.tail = result.catch(() => undefined);
     return result;
   }
+}
+
+function decodeBase64(encoded: string): Uint8Array {
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
 }

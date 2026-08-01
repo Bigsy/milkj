@@ -2,6 +2,10 @@ package com.hedworth.milkj.settings
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.util.xmlb.XmlSerializer
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class MilkJSettingsTest : BasePlatformTestCase() {
     private lateinit var settings: MilkJSettings
@@ -24,10 +28,18 @@ class MilkJSettingsTest : BasePlatformTestCase() {
 
     fun testDictionaryDefaultsEmptyAndCopyIsDefensive() {
         assertEmpty(settings.state.customDictionary)
-        val state = MilkJSettings.State().apply { customDictionary = mutableListOf("MilkJ") }
+        val state = MilkJSettings.State().apply {
+            customDictionary = mutableListOf("MilkJ")
+            weirpacks = mutableListOf(WeirpackSetting().apply {
+                name = "House style"
+                data = "YWJj"
+            })
+        }
         val copy = state.copy()
         state.customDictionary += "Proofly"
+        state.weirpacks.single().name = "Changed"
         assertEquals(listOf("MilkJ"), copy.customDictionary)
+        assertEquals("House style", copy.weirpacks.single().name)
     }
 
     fun testLoadAndUpdateNormalizeDictionary() {
@@ -59,5 +71,87 @@ class MilkJSettingsTest : BasePlatformTestCase() {
         assertFalse(settings.addDictionaryWord("x".repeat(65)))
         assertEquals(listOf("Proofly"), settings.state.customDictionary)
         assertEquals(1, notifications)
+    }
+
+    fun testWeirpacksAreNormalizedAndOnlyEnabledDataIsExposed() {
+        settings.loadState(MilkJSettings.State().apply {
+            weirpacks = mutableListOf(
+                WeirpackSetting().apply {
+                    name = " House style "
+                    data = " YWJj "
+                },
+                WeirpackSetting().apply {
+                    name = "Disabled"
+                    enabled = false
+                    data = "ZGVm"
+                },
+                WeirpackSetting().apply {
+                    name = "Empty"
+                    data = "  "
+                },
+            )
+        })
+
+        assertEquals(listOf("House style", "Disabled"), settings.state.weirpacks.map(WeirpackSetting::name))
+        assertEquals(listOf("YWJj"), enabledWeirpacks(settings.state))
+    }
+
+    fun testWeirpackSettingsRoundTripThroughIntellijXmlSerialization() {
+        val state = MilkJSettings.State().apply {
+            weirpacks = mutableListOf(WeirpackSetting().apply {
+                name = "House style"
+                enabled = false
+                data = "UEsDBAoAAAAA"
+            })
+        }
+
+        val restored = XmlSerializer.deserialize(
+            XmlSerializer.serialize(state),
+            MilkJSettings.State::class.java,
+        )
+
+        assertEquals("House style", restored.weirpacks.single().name)
+        assertFalse(restored.weirpacks.single().enabled)
+        assertEquals("UEsDBAoAAAAA", restored.weirpacks.single().data)
+    }
+
+    fun testValidWeirpackRequiresManifestAndRule() {
+        val manifest = """{"author":"MilkJ","version":"1","description":"Test","license":"MIT"}"""
+        assertNull(validateWeirpack(zip(
+            "manifest.json" to manifest,
+            "HouseStyle.weir" to "expr main teh",
+        )))
+        // harper-core accepts rules nested in subdirectories.
+        assertNull(validateWeirpack(zip(
+            "manifest.json" to manifest,
+            "rules/HouseStyle.weir" to "expr main teh",
+        )))
+        assertEquals(
+            "The Weirpack is missing manifest.json at its root.",
+            validateWeirpack(zip("HouseStyle.weir" to "expr main teh")),
+        )
+        assertEquals(
+            "The Weirpack does not contain any .weir rules.",
+            validateWeirpack(zip("manifest.json" to "{}")),
+        )
+    }
+
+    fun testInvalidWeirpackArchiveIsRejected() {
+        assertEquals(
+            "The file is not a valid ZIP-based Weirpack.",
+            validateWeirpack("not a zip".toByteArray()),
+        )
+    }
+
+    private fun zip(vararg entries: Pair<String, String>): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        ZipOutputStream(bytes).use { archive ->
+            entries.forEach { (name, contents) ->
+                archive.putNextEntry(ZipEntry(name))
+                archive.write(contents.toByteArray())
+                archive.closeEntry()
+            }
+        }
+        return bytes.toByteArray()
     }
 }
