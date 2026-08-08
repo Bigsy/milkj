@@ -4,6 +4,7 @@ import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.HyperlinkLabel
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
@@ -317,13 +318,22 @@ class MilkJConfigurable : Configurable {
             add(javax.swing.Box.createHorizontalStrut(6))
             add(removeButton)
         }
+        val help = JPanel(BorderLayout(0, 2)).apply {
+            add(
+                JBLabel("Import ZIP-based .weirpack archives containing custom Harper rules or dictionaries."),
+                BorderLayout.NORTH,
+            )
+            add(HyperlinkLabel("Create your own with Weirsmith").apply {
+                setHyperlinkTarget(WEIRSMITH_URL)
+            }, BorderLayout.WEST)
+        }
         return JPanel(BorderLayout(0, 4)).apply {
             add(JBScrollPane(table).apply {
                 preferredSize = Dimension(360, 90)
             }, BorderLayout.CENTER)
             add(JPanel(BorderLayout(0, 4)).apply {
                 add(buttons, BorderLayout.NORTH)
-                add(JBLabel("Import ZIP-based .weirpack archives containing custom Harper rules or dictionaries."), BorderLayout.CENTER)
+                add(help, BorderLayout.CENTER)
                 add(status, BorderLayout.SOUTH)
             }, BorderLayout.SOUTH)
         }
@@ -477,6 +487,7 @@ class MilkJConfigurable : Configurable {
 
     private companion object {
         const val MAX_WEIRPACK_FILE_BYTES = 10L * 1024L * 1024L
+        const val WEIRSMITH_URL = "https://weirsmith.bigsy.uk"
     }
 }
 
