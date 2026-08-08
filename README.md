@@ -11,6 +11,8 @@ Open a Markdown file as usual and switch to the **MilkJ** tab to edit with a cle
 - Rich-text Markdown editing powered by Milkdown and Crepe.
 - Native JetBrains editor tab integration for `.md` and `.markdown` files.
 - Two-way sync with the IntelliJ document model, so edits flow between MilkJ and the built-in Markdown editor.
+- Project-aware Markdown links and bare paths open in the JetBrains editor with Ctrl-click (Windows/Linux) or Cmd-click (macOS), including one-based references such as `src/main/kotlin/example/Bridge.kt#L151`.
+- Relative links resolve from the Markdown file and then the project root; a leading `/` is project-root-relative inside MilkJ, for example `[Frontend](/frontend/src/main.ts#L127-L190)`.
 - Harper spell checking with correction suggestions, an application-wide custom dictionary, and importable Weirpacks for custom grammar rules.
 - Mermaid diagram previews for `mermaid` fenced code blocks.
 - Mermaid language support in the code-block language picker.

@@ -77,6 +77,12 @@ class MilkJShortcutsEditor(
                 ),
             ) +
             section(
+                "Navigation",
+                listOf(
+                    "$mod+click a file link or bare path" to "Open the project file at its linked line",
+                ),
+            ) +
+            section(
                 "Formatting",
                 listOf(
                     "$mod+B" to "Bold",

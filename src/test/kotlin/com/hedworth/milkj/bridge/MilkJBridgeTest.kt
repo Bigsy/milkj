@@ -1,5 +1,6 @@
 package com.hedworth.milkj.bridge
 
+import com.hedworth.milkj.navigation.FileLinkNavigator
 import com.hedworth.milkj.settings.MilkJSettings
 import com.hedworth.milkj.settings.WeirpackSetting
 import com.intellij.openapi.command.WriteCommandAction
@@ -48,9 +49,18 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         }
     }
 
+    private class FakeFileLinkNavigator : FileLinkNavigator {
+        val targets = mutableListOf<String>()
+
+        override fun navigate(rawHref: String) {
+            targets += rawHref
+        }
+    }
+
     private lateinit var file: VirtualFile
     private lateinit var document: Document
     private lateinit var connection: FakeBrowserConnection
+    private lateinit var navigator: FakeFileLinkNavigator
     private lateinit var bridge: MilkJBridge
 
     private fun setUpBridge(initialText: String) {
@@ -58,7 +68,8 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         document = FileDocumentManager.getInstance().getDocument(file)!!
         FileDocumentManager.getInstance().saveAllDocuments()
         connection = FakeBrowserConnection()
-        bridge = MilkJBridge(project, file, connection)
+        navigator = FakeFileLinkNavigator()
+        bridge = MilkJBridge(project, file, connection, navigator)
         Disposer.register(testRootDisposable, bridge)
         bridge.install()
     }
@@ -167,6 +178,45 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertFalse(isDocumentUnsaved())
     }
 
+    fun testNavigationProtocolDecodesAndRequiresReady() {
+        setUpBridge("original\n")
+
+        sendFromPage("navigate:file:src%2FFoo.kt%23L2")
+        assertEmpty(navigator.targets)
+
+        sendFromPage("ready")
+        sendFromPage("navigate:file:src%2FFoo.kt%23L2")
+        sendFromPage("navigate:file:C%2B%2B.kt%23L1")
+        sendFromPage("navigate:file:name%2523part.kt%23L3")
+
+        assertEquals(
+            listOf("src/Foo.kt#L2", "C++.kt#L1", "name%23part.kt#L3"),
+            navigator.targets,
+        )
+    }
+
+    fun testMalformedNavigationTransportIsIgnored() {
+        setUpBridge("original\n")
+        sendFromPage("ready")
+        val documentText = document.text
+        val scriptsBefore = connection.executedScripts.toList()
+
+        listOf(
+            "navigate:file:",
+            "navigate:file:%",
+            "navigate:file:%C3%28",
+            "navigate:file:%00file.kt",
+            "navigate:file:${"a".repeat(8 * 1024 + 1)}",
+        ).forEach(::sendFromPage)
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertEmpty(navigator.targets)
+        assertEquals(documentText, document.text)
+        assertEquals(scriptsBefore, connection.executedScripts)
+        assertFalse(isDocumentUnsaved())
+    }
+
     fun testNativeEditDuringPendingPageWriteWins() {
         setUpBridge("original\n")
         sendFromPage("ready")
@@ -230,7 +280,8 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         document = FileDocumentManager.getInstance().getDocument(file)!!
         FileDocumentManager.getInstance().saveAllDocuments()
         connection = FakeBrowserConnection()
-        bridge = MilkJBridge(project, file, connection)
+        navigator = FakeFileLinkNavigator()
+        bridge = MilkJBridge(project, file, connection, navigator)
         bridge.setDiskTextForTest("latest disk version\n")
         Disposer.register(testRootDisposable, bridge)
         bridge.install()

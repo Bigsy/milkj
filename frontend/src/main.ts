@@ -13,6 +13,7 @@ import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
+import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
 import "@milkdown/crepe/theme/common/style.css";
@@ -114,6 +115,12 @@ const findBar = installFindBar({
   onUserEdit: markUserEdit,
 });
 
+const disposeProjectLinks = installProjectLinks({
+  navigate: (href) => {
+    window.milkjSendToIde?.(`navigate:file:${encodeURIComponent(href)}`);
+  },
+});
+
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
@@ -121,6 +128,7 @@ const proofingController = new ProofingController({
   },
 });
 window.addEventListener("pagehide", () => {
+  disposeProjectLinks();
   void proofingController.dispose();
 }, { once: true });
 
@@ -165,6 +173,7 @@ async function createEditor() {
       }),
     })));
     crepe.editor.use($prose(() => proofingController.createPlugin()));
+    crepe.editor.use($prose(() => createProjectLinksPlugin()));
     await crepe.create();
     crepe.setReadonly(currentReadonly);
     crepe.on((listener) => {
@@ -385,6 +394,18 @@ style.textContent = `
     box-sizing: border-box;
     background: var(--crepe-color-background);
     color: var(--crepe-color-on-background);
+  }
+
+  .milkdown a[href],
+  .milkdown .milkj-project-link {
+    cursor: pointer;
+  }
+
+  .milkdown .milkj-project-link {
+    color: var(--crepe-color-primary);
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-underline-offset: 2px;
   }
 
   :root[data-editor-theme="nord"] .milkdown {

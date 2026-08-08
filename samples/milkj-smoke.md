@@ -19,6 +19,42 @@ Markdown behavior.
 
 Edit freely. Save it, switch to the native Markdown editor, edit there, then switch back to MilkJ.
 
+## Project File Links
+
+Hold Ctrl on Windows/Linux or Cmd on macOS while clicking these links in MilkJ:
+
+> When testing with `./gradlew runIde`, open the MilkJ repository directory as the sandbox IDE's
+> project before opening this file. Opening only this Markdown file leaves the repository outside
+> the sandbox project's content roots, so path-bearing links are intentionally rejected.
+
+Bare paths produced by tools or LLMs are linkified without changing their Markdown. Modifier-click
+these as well:
+
+../src/main/kotlin/com/hedworth/milkj/navigation/ProjectFileLinkResolver.kt#L35
+
+`/frontend/src/project-links.ts#L13-L40`
+
+* [Bridge implementation — relative to this file](../src/main/kotlin/com/hedworth/milkj/bridge/MilkJBridge.kt#L169)
+
+* [Project link click handler — project-root-relative range](/frontend/src/project-links.ts#L10-L35)
+
+* [Project file resolver — relative path](../src/main/kotlin/com/hedworth/milkj/navigation/ProjectFileLinkResolver.kt#L35)
+
+* [README — no line fragment, so line 1](../README.md)
+
+* [This smoke test — current-file line-only link](#L1)
+
+The following links exercise safe failure behavior. They should leave MilkJ open and show a warning:
+
+* [Missing file](../src/main/kotlin/com/hedworth/milkj/navigation/DoesNotExist.kt#L1)
+
+* [Directory instead of file](../src/main/kotlin/com/hedworth/milkj/navigation)
+
+* [Valid file but line outside its range](../README.md#L99999)
+
+This web link should be suppressed on modifier-click without being sent to the IDE or navigating
+JCEF: [Milkdown website](https://milkdown.dev).
+
 ## Inline Formatting
 
 Plain text with **bold**, _italic_, _**bold italic**_, ~~strikethrough~~, `inline code`, and a
@@ -176,4 +212,3 @@ Use this section for quick manual sync testing.
 * Native editor edit:
 
 * Terminal edit:
-

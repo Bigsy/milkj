@@ -1,6 +1,18 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
+fun usesUnifiedIntelliJIdea(version: String): Boolean {
+    fun numericPart(value: String): Int? = value.takeWhile(Char::isDigit).toIntOrNull()
+
+    val parts = version.split('.')
+    val first = parts.firstOrNull()?.let(::numericPart) ?: return false
+    return if (first >= 2000) {
+        first > 2025 || (first == 2025 && (parts.getOrNull(1)?.let(::numericPart) ?: 0) >= 3)
+    } else {
+        first >= 253
+    }
+}
+
 // MilkJ — IntelliJ plugin: a Milkdown-powered WYSIWYG Markdown editor (JCEF) that sits as a
 // switchable editor tab alongside the built-in IntelliJ Markdown editor.
 //
@@ -10,7 +22,7 @@ import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.1.0"
+    id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.17.0"
 }
 
@@ -28,9 +40,18 @@ repositories {
 
 dependencies {
     intellijPlatform {
+        val platformVersion = providers.gradleProperty("platformVersion")
+        val platformType = providers.gradleProperty("platformType").zip(platformVersion) { type, version ->
+            val requested = IntelliJPlatformType.fromCode(type)
+            if (requested == IntelliJPlatformType.IntellijIdeaCommunity && usesUnifiedIntelliJIdea(version)) {
+                IntelliJPlatformType.IntellijIdea
+            } else {
+                requested
+            }
+        }
         create(
-            providers.gradleProperty("platformType").map { IntelliJPlatformType.fromCode(it) },
-            providers.gradleProperty("platformVersion"),
+            platformType,
+            platformVersion,
         )
 
         pluginVerifier()

@@ -1,5 +1,9 @@
 package com.hedworth.milkj.bridge
 
+import com.hedworth.milkj.navigation.FileLinkNavigator
+import com.hedworth.milkj.navigation.ProjectFileLinkNavigator
+import com.hedworth.milkj.navigation.hasIsoControlCharacters
+import com.hedworth.milkj.navigation.strictPercentDecode
 import com.hedworth.milkj.settings.MilkJSettings
 import com.hedworth.milkj.settings.enabledWeirpacks
 import com.hedworth.milkj.settings.normalizeDictionary
@@ -14,6 +18,8 @@ import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.impl.LoadTextUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.StandardFileSystems
 import com.intellij.openapi.vfs.VirtualFile
@@ -47,7 +53,9 @@ class MilkJBridge(
     private val project: Project,
     private val file: VirtualFile,
     private val connection: MilkJBrowserConnection,
+    navigator: FileLinkNavigator? = null,
 ) : Disposable {
+    private val fileLinkNavigator: FileLinkNavigator
     private val settings: MilkJSettings = MilkJSettings.getInstance()
     private val messageBusConnection: MessageBusConnection =
         ApplicationManager.getApplication().messageBus.connect(this)
@@ -63,6 +71,16 @@ class MilkJBridge(
 
     // One notification per conflict burst; reset only after disk and Document agree again.
     private var conflictNotified = false
+
+    init {
+        if (navigator != null) {
+            fileLinkNavigator = navigator
+        } else {
+            val productionNavigator = ProjectFileLinkNavigator(project, file)
+            fileLinkNavigator = productionNavigator
+            Disposer.register(this, productionNavigator)
+        }
+    }
 
     fun install() {
         connection.connect { message -> handlePageMessage(message) }
@@ -181,8 +199,29 @@ class MilkJBridge(
                         )
                     }.getOrNull()?.let(settings::addDictionaryWord)
                 }
+                message.startsWith(NAVIGATION_PREFIX) && pageReady -> {
+                    handleNavigationPayload(message.removePrefix(NAVIGATION_PREFIX))
+                }
             }
         }
+    }
+
+    private fun handleNavigationPayload(payload: String) {
+        if (payload.length > MAX_NAVIGATION_PAYLOAD_CHARS || payload.any { it.code > 0x7f }) {
+            LOG.warn("Dropped invalid MilkJ navigation message: encoded payload is oversized or non-ASCII")
+            return
+        }
+        val target = try {
+            strictPercentDecode(payload)
+        } catch (_: IllegalArgumentException) {
+            LOG.warn("Dropped invalid MilkJ navigation message: malformed percent encoding or UTF-8")
+            return
+        }
+        if (target.isBlank() || target.length > MAX_NAVIGATION_TARGET_CHARS || target.hasIsoControlCharacters()) {
+            LOG.warn("Dropped invalid MilkJ navigation message: decoded target is empty, oversized, or contains controls")
+            return
+        }
+        fileLinkNavigator.navigate(target)
     }
 
     private fun scheduleDocumentWrite(pageEdit: PageEdit) {
@@ -400,8 +439,12 @@ class MilkJBridge(
     }
 
     companion object {
+        private val LOG = Logger.getInstance(MilkJBridge::class.java)
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
+        private const val NAVIGATION_PREFIX = "navigate:file:"
+        private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
+        private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024
 
         internal fun frontendConfigJson(state: MilkJSettings.State, readonly: Boolean): String {
             val effectiveTheme = when (state.theme) {

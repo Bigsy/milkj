@@ -27,6 +27,13 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.10</b>
+    <ul>
+        <li>Added Cmd/Ctrl-click navigation from Markdown links and bare project paths to files and line ranges in the JetBrains editor.</li>
+        <li>Relative targets resolve safely from the Markdown file or project root, with clear warnings for invalid or out-of-project targets.</li>
+        <li>Added support for running the plugin against the unified IntelliJ IDEA distribution used from 2025.3 onward.</li>
+    </ul>
+    <br/>
     <b>0.1.9</b>
     <ul>
         <li>Added Harper spell checking for rendered Markdown.</li>
