@@ -66,6 +66,7 @@ class MilkJBridge(
     private var pageRevision = 0L
     private var trustedDiskFingerprint: DiskFingerprint? = null
     private var syncBlocked = false
+    private var roundTripFailureNotified = false
     private var testDiskSnapshot: DiskSnapshot? = null
     private var testDiskVersion = 0L
 
@@ -188,8 +189,12 @@ class MilkJBridge(
                 }
                 message.startsWith("markdown:") && pageReady -> {
                     parsePageMarkdown(message.removePrefix("markdown:"))?.let { pageEdit ->
+                        roundTripFailureNotified = false
                         scheduleDocumentWrite(pageEdit)
                     }
+                }
+                message.startsWith(ROUNDTRIP_ERROR_PREFIX) && pageReady -> {
+                    notifyRoundTripFailure(message.removePrefix(ROUNDTRIP_ERROR_PREFIX))
                 }
                 message.startsWith("dictionary:add:") && pageReady -> {
                     runCatching {
@@ -222,6 +227,23 @@ class MilkJBridge(
             return
         }
         fileLinkNavigator.navigate(target)
+    }
+
+    private fun notifyRoundTripFailure(encodedReason: String) {
+        if (roundTripFailureNotified) return
+        val reason = runCatching {
+            URLDecoder.decode(encodedReason.take(MAX_ROUNDTRIP_ERROR_CHARS), StandardCharsets.UTF_8)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: "The edit could not be mapped safely onto the original Markdown."
+        roundTripFailureNotified = true
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("MilkJ")
+            .createNotification(
+                "MilkJ kept the Markdown source unchanged",
+                "$reason The rich-text edit was reverted; use the built-in source editor for this change.",
+                NotificationType.WARNING,
+            )
+            .notify(project)
     }
 
     private fun scheduleDocumentWrite(pageEdit: PageEdit) {
@@ -443,6 +465,8 @@ class MilkJBridge(
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
         private const val NAVIGATION_PREFIX = "navigate:file:"
+        private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
+        private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
         private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024
 

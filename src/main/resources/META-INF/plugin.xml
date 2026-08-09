@@ -35,6 +35,8 @@
     <change-notes><![CDATA[
     <b>0.1.11</b>
     <ul>
+        <li>Rich-text edits now preserve the original Markdown source around each change, including frontmatter, raw HTML, custom extensions, and existing formatting.</li>
+        <li>Edits that cannot be mapped back safely are reverted with a warning instead of rewriting unsupported syntax.</li>
         <li>Renamed the Marketplace listing to MilkJ Markdown so its purpose is clearer when browsing and searching for Markdown tools.</li>
         <li>Refreshed the Marketplace description and project documentation with clearer features, installation steps, and use cases.</li>
     </ul>

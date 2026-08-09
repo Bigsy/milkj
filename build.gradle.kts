@@ -135,5 +135,9 @@ tasks {
     processResources {
         dependsOn(frontendBuild)
         from("THIRD_PARTY_NOTICES.md")
+        from("frontend/node_modules/diff-match-patch/LICENSE") {
+            into("third-party")
+            rename { "diff-match-patch-LICENSE" }
+        }
     }
 }

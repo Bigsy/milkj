@@ -6,7 +6,7 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
-import { editorViewCtx } from "@milkdown/kit/core";
+import { editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
 import { Plugin } from "@milkdown/kit/prose/state";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
@@ -90,7 +90,7 @@ let mermaidRenderSeq = 0;
 // window: only a document change that did not happen during an IDE apply may travel back. The IDE
 // also attaches a monotonically increasing revision, so even an unusually delayed callback cannot
 // overwrite a newer document.
-const bridgeSync = new EditorBridgeSync();
+const bridgeSync = new EditorBridgeSync(canonicalizeMarkdown);
 
 function markUserEdit() {
   bridgeSync.recordUserEdit();
@@ -179,9 +179,14 @@ async function createEditor() {
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         currentMarkdown = markdown;
-        const message = bridgeSync.messageForMarkdown(markdown);
-        if (message) {
-          window.milkjSendToIde?.(message);
+        const result = bridgeSync.messageForMarkdown(markdown);
+        if (result?.ok) {
+          window.milkjSendToIde?.(result.message);
+        } else if (result) {
+          window.milkjSendToIde?.(`roundtrip:error:${encodeURIComponent(result.reason)}`);
+          // Do not leave a rejected edit visible: it was never written to IntelliJ and a later
+          // edit must not accidentally include it. Defer the dispatch until this listener returns.
+          window.setTimeout(() => restoreSourceAfterUnsafeEdit(result.sourceMarkdown), 0);
         }
         findBar.refresh();
       });
@@ -197,6 +202,25 @@ async function createEditor() {
     creatingEditor = false;
   }
   findBar.syncToView();
+}
+
+function canonicalizeMarkdown(markdown: string): string {
+  if (!crepe || creatingEditor) {
+    throw new Error("The Milkdown parser is not ready");
+  }
+  return crepe.editor.action((ctx) => {
+    const document = ctx.get(parserCtx)(markdown);
+    return ctx.get(serializerCtx)(document);
+  });
+}
+
+function restoreSourceAfterUnsafeEdit(sourceMarkdown: string) {
+  if (!crepe || creatingEditor) return;
+  currentMarkdown = sourceMarkdown;
+  const activeCrepe = crepe;
+  bridgeSync.applyFromIde(() => {
+    activeCrepe.editor.action(replaceAll(sourceMarkdown));
+  });
 }
 
 async function renderMermaidPreview(
@@ -283,7 +307,7 @@ function createMermaidStreamParser(): StreamParser<null> {
 }
 
 window.milkjSetMarkdown = (markdown: string, revision: number) => {
-  bridgeSync.acceptIdeRevision(revision);
+  bridgeSync.acceptIdeRevision(revision, markdown);
   if (markdown === currentMarkdown) {
     return;
   }
