@@ -1,14 +1,23 @@
-# MilkJ
+# MilkJ Markdown
 
-https://plugins.jetbrains.com/plugin/32518-milkj
+[Install MilkJ Markdown from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/32518-milkj)
 
-MilkJ adds a rich-text Markdown editor tab to JetBrains IDEs.
+MilkJ Markdown is a WYSIWYG Markdown editor for JetBrains IDEs. It adds a rich-text editor tab for `.md` and `.markdown` files while keeping the built-in Markdown source editor available alongside it.
 
-Open a Markdown file as usual and switch to the **MilkJ** tab to edit with a clean WYSIWYG experience while keeping the IDE's native Markdown editor available alongside it.
+Use it for README files, documentation, project notes, and AI-generated plans without leaving your IDE. Open a Markdown file and switch to the **MilkJ** tab to edit visually; switch back to the native tab whenever you want direct access to the source.
+
+## Install
+
+1. Open `Settings` -> `Plugins` -> `Marketplace` in your JetBrains IDE.
+2. Search for **MilkJ Markdown**.
+3. Select **Install**, restart the IDE if prompted, and open a Markdown file.
+4. Select the **MilkJ** editor tab.
+
+You can also install it directly from the [JetBrains Marketplace listing](https://plugins.jetbrains.com/plugin/32518-milkj).
 
 ## Features
 
-- Rich-text Markdown editing powered by Milkdown and Crepe.
+- WYSIWYG rich-text Markdown editing powered by Milkdown and Crepe.
 - Native JetBrains editor tab integration for `.md` and `.markdown` files.
 - Two-way sync with the IntelliJ document model, so edits flow between MilkJ and the built-in Markdown editor.
 - Project-aware Markdown links and bare paths open in the JetBrains editor with Ctrl-click (Windows/Linux) or Cmd-click (macOS), including one-based references such as `src/main/kotlin/example/Bridge.kt#L151`.
@@ -37,6 +46,12 @@ MilkJ settings are available under:
 `Settings` -> `Tools` -> `MilkJ`
 
 From there you can choose the default Markdown editor, editor theme, Mermaid theme, and light/dark behavior. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
+
+## Feedback and support
+
+- [Report a bug or request a feature](https://github.com/Bigsy/milkj/issues)
+- [View the source code](https://github.com/Bigsy/milkj)
+- [JetBrains Marketplace listing](https://plugins.jetbrains.com/plugin/32518-milkj)
 
 ## Release builds
 

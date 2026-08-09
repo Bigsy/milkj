@@ -1,20 +1,26 @@
 <idea-plugin>
     <id>com.hedworth.milkj</id>
-    <name>MilkJ</name>
-    <vendor url="https://github.com/Bigsy">Bill Hedworth</vendor>
+    <name>MilkJ Markdown</name>
+    <vendor url="https://github.com/Bigsy/milkj">Bill Hedworth</vendor>
 
     <description><![CDATA[
-    A WYSIWYG Markdown editor for JetBrains IDEs, powered by <a href="https://milkdown.dev">Milkdown</a>. Ideal for agentic AI md PLAN editing workflows.
+    MilkJ Markdown is a WYSIWYG Markdown editor for JetBrains IDEs. Edit <code>.md</code> files as
+    rich text in a native editor tab, then switch to Markdown source whenever you need it.
     <br/><br/>
-    MilkJ adds a rich "what you see is what you get" editing surface for Markdown files, rendered with
-    Milkdown inside an embedded JCEF browser. It appears as an editor tab right next to IntelliJ's
-    built-in Markdown editor &mdash; write in WYSIWYG, then switch back to the native source/preview
-    editor whenever you like.
+    Powered by <a href="https://milkdown.dev">Milkdown</a>, MilkJ works alongside the built-in
+    Markdown editor and keeps both editing surfaces synchronized. Use it for README files,
+    documentation, project notes, and AI-generated plans without leaving your IDE.
     <br/><br/>
-    Built-in Harper spell checking highlights mistakes as you write and includes an application-wide,
-    persistent custom dictionary. Add project names and specialist terms directly from the correction
-    popup, manage the complete dictionary in MilkJ settings, and import Harper Weirpacks for custom
-    grammar and style rules.
+    <b>Features</b>
+    <ul>
+        <li>WYSIWYG rich-text editing with two-way Markdown source synchronization.</li>
+        <li>Tables, task lists, headings, links, images, blockquotes, and highlighted code blocks.</li>
+        <li>Mermaid diagram previews and LaTeX math rendering.</li>
+        <li>Harper spelling and grammar checking, a custom dictionary, and importable Weirpacks.</li>
+        <li>Cmd/Ctrl-click navigation from Markdown links and project paths to files and line ranges.</li>
+        <li>Configurable themes and the option to open Markdown files in MilkJ by default.</li>
+    </ul>
+    Open a Markdown file and select the <b>MilkJ</b> editor tab to get started.
     ]]></description>
 
     <!-- Product / plugin compatibility. No dependency on the bundled Markdown plugin: MilkJ matches
@@ -27,6 +33,12 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.11</b>
+    <ul>
+        <li>Renamed the Marketplace listing to MilkJ Markdown so its purpose is clearer when browsing and searching for Markdown tools.</li>
+        <li>Refreshed the Marketplace description and project documentation with clearer features, installation steps, and use cases.</li>
+    </ul>
+    <br/>
     <b>0.1.10</b>
     <ul>
         <li>Added Cmd/Ctrl-click navigation from Markdown links and bare project paths to files and line ranges in the JetBrains editor.</li>
