@@ -458,6 +458,14 @@ style.textContent = `
     cursor: pointer;
   }
 
+  /* Crepe hides the native caret unconditionally and only colors its virtual caret while the
+     ProseMirror-focused class is present. JCEF's focus reporting is unreliable — the editor can be
+     receiving keystrokes while that class is absent — which leaves no visible caret at all. Color
+     the virtual caret like the text, independent of focus state. */
+  .milkdown .ProseMirror {
+    --prosemirror-virtual-cursor-color: var(--crepe-color-on-background);
+  }
+
   .milkdown .milkj-project-link {
     color: var(--crepe-color-primary);
     text-decoration: underline;

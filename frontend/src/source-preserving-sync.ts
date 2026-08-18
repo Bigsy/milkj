@@ -41,6 +41,22 @@ export function mergeSourcePreservingEdit(
   // a valid coarse patch, which must pass the canonical-equivalence check below before it is used.
   dmp.Diff_Timeout = 0.1;
   const patches = dmp.patch_make(canonicalBefore, editedCanonicalMarkdown);
+  // patch_apply locates each hunk by fuzzy-matching near its recorded position, and its search
+  // radius only spans a few hundred characters. The recorded positions are canonical-text
+  // coordinates, but the text being patched is the original source, whose formatting can drift far
+  // beyond that radius — one table whose cells the serializer pads to the widest column shifts
+  // everything below it by thousands of characters. Translate each hunk's position into source
+  // coordinates first.
+  const coordinateDiffs = dmp.diff_main(canonicalBefore, sourceMarkdown);
+  // @types/diff-match-patch mistypes patch_make's elements as the patch_obj constructor.
+  for (const patch of patches as unknown as Array<{ start1: number | null; start2: number | null }>) {
+    if (patch.start1 !== null) {
+      patch.start1 = dmp.diff_xIndex(coordinateDiffs, patch.start1);
+    }
+    if (patch.start2 !== null) {
+      patch.start2 = dmp.diff_xIndex(coordinateDiffs, patch.start2);
+    }
+  }
   const [patchedCandidate, applied] = dmp.patch_apply(patches, sourceMarkdown);
 
   if (applied.some((didApply) => !didApply)) {

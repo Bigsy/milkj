@@ -83,6 +83,39 @@ Edit this paragraph.
     });
   });
 
+  it("merges an edit far below a table whose canonical padding shifts every position", () => {
+    // Regression: serializing a GFM table pads every cell to the widest column, so a table with
+    // one long cell shifts everything below it by more than patch_apply's fuzzy-match radius
+    // (a few hundred characters). Edits below such a table failed with "could not map".
+    const longCell = "a very long confirmation note that widens this column considerably " +
+      "and keeps going for a couple of hundred characters so each of the other rows in this " +
+      "column gets padded all the way out to this width by the canonical serializer";
+    const rows = Array.from({ length: 12 }, (_, i) => `| key ${i} | value ${i} |`).join("\n");
+    const source = `# Runbook
+
+| Thing | Value |
+| --- | --- |
+| note | ${longCell} |
+${rows}
+
+## Steps
+
+Edit this sentence far below the table.
+`;
+    const canonical = canonicalize(source);
+    // The premise of the regression: canonical padding must shift later content by more than
+    // patch_apply's effective search radius (~500 chars).
+    expect(canonical.indexOf("## Steps") - source.indexOf("## Steps")).toBeGreaterThan(1000);
+
+    const edited = canonical.replace("far below the table", "way below the table");
+    const result = mergeSourcePreservingEdit(source, edited, canonicalize);
+
+    expect(result).toEqual({
+      ok: true,
+      markdown: source.replace("far below the table", "way below the table"),
+    });
+  });
+
   it("merges the mid-typing state where the line ends in a just-typed space", () => {
     // Regression: pausing after typing a space serialized "Hello there \n…", whose trailing space
     // does not survive a parse round-trip; the merge rejected it and the editor content was
