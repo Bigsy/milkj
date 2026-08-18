@@ -256,6 +256,18 @@ function splitMarkdownBlocksForSync(markdown: string): MarkdownBlock | undefined
   }
 }
 
+/** True when parsing the pushed Markdown yields the document the editor already holds. */
+function parsesToCurrentDocument(activeCrepe: Crepe, markdown: string): boolean {
+  try {
+    return activeCrepe.editor.action((ctx) => {
+      const pushed = ctx.get(parserCtx)(markdown);
+      return pushed !== null && pushed.eq(ctx.get(editorViewCtx).state.doc);
+    });
+  } catch {
+    return false;
+  }
+}
+
 function restoreSourceAfterUnsafeEdit(sourceMarkdown: string) {
   if (!crepe || creatingEditor) return;
   currentMarkdown = sourceMarkdown;
@@ -364,9 +376,16 @@ window.milkjSetMarkdown = (markdown: string, revision: number) => {
     return;
   }
   if (crepe && editorReady) {
+    const activeCrepe = crepe;
+    if (parsesToCurrentDocument(activeCrepe, markdown)) {
+      // Nothing to show: the push differs from this page's serialization but not from its document.
+      // IntelliJ's save normalization (stripping the trailing space of a line being typed, say)
+      // rewrites the file and the IDE relays that back as an external change; replacing the content
+      // for it would only disturb the caret.
+      return;
+    }
     // Replace content in place: rebuilding Crepe on every external edit would tear down
     // ProseMirror and the CodeMirror blocks, losing cursor and scroll.
-    const activeCrepe = crepe;
     bridgeSync.applyFromIde(() => {
       replaceAllKeepingSelection(activeCrepe, markdown);
     });
