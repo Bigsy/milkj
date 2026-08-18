@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { Editor, parserCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
+import { Editor, editorViewCtx, parserCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
+import { TextSelection } from "@milkdown/kit/prose/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mergeSourcePreservingEdit } from "./source-preserving-sync";
 
@@ -80,5 +81,26 @@ Edit this paragraph.
       ok: true,
       markdown: source.replace("Edit this paragraph.", "This paragraph was edited."),
     });
+  });
+
+  it("merges the mid-typing state where the line ends in a just-typed space", () => {
+    // Regression: pausing after typing a space serialized "Hello there \n…", whose trailing space
+    // does not survive a parse round-trip; the merge rejected it and the editor content was
+    // reverted under the user's caret.
+    const source = "Hello\n\nWorld\n";
+    const serialized = editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const doc = ctx.get(parserCtx)(source);
+      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content));
+      // Caret at the end of "Hello", then type " there " exactly as a user pausing mid-word would.
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 6)));
+      view.dispatch(view.state.tr.insertText(" there "));
+      return ctx.get(serializerCtx)(view.state.doc);
+    });
+    expect(serialized).toBe("Hello there \n\nWorld\n");
+
+    const result = mergeSourcePreservingEdit(source, serialized, canonicalize);
+
+    expect(result).toEqual({ ok: true, markdown: "Hello there \n\nWorld\n" });
   });
 });

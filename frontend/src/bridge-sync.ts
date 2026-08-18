@@ -17,11 +17,22 @@ export class EditorBridgeSync {
 
   constructor(private readonly canonicalize: MarkdownCanonicalizer = (markdown) => markdown) {}
 
-  acceptIdeRevision(revision: number, sourceMarkdown: string) {
+  /**
+   * Accepts a push from the IDE. Returns true when the pushed text is exactly the source this page
+   * last handed to the IDE — an echo of its own write (the IDE relays saves of that write back as
+   * if they were external changes). An echo only refreshes the revision: the canonical mapping and
+   * any user edit made while the echo was in flight must survive, and the caller must not replace
+   * the editor content (which would reset the cursor).
+   */
+  acceptIdeRevision(revision: number, sourceMarkdown: string): boolean {
     this.revision = revision;
+    if (sourceMarkdown === this.sourceMarkdown) {
+      return true;
+    }
     this.sourceMarkdown = sourceMarkdown;
     this.canonicalSource = undefined;
     this.userEdited = false;
+    return false;
   }
 
   applyFromIde(action: () => void) {

@@ -33,6 +33,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.12</b>
+    <ul>
+        <li>Stability fixes for rich-text editing: no more caret jumps or reverted edits while typing.</li>
+    </ul>
+    <br/>
     <b>0.1.11</b>
     <ul>
         <li>Rich-text edits now preserve the original Markdown source around each change, including frontmatter, raw HTML, custom extensions, and existing formatting.</li>

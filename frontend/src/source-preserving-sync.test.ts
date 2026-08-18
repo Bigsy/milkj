@@ -87,14 +87,24 @@ Editable paragraph.
     });
   });
 
-  it("rejects a candidate that does not parse back to the edited document", () => {
-    const source = "# Heading\n\nOriginal paragraph.\n";
-    const edited = "# Heading\n\nEdited paragraph.\n";
-    const canonicalize = (markdown: string) => markdown.includes("Edited")
-      ? markdown.replace("Edited", "Different")
-      : markdown;
+  it("accepts a transient editor state that does not survive a parse round-trip", () => {
+    // Typing leaves a trailing space in the editor's paragraph; serialization keeps it but a
+    // CommonMark parse strips it, so no candidate can canonicalize to the edited string exactly.
+    // The merge must still succeed — failing here reverted the user's in-progress edit.
+    const stripTrailingSpaces = (markdown: string) =>
+      markdown.split("\n").map((line) => line.replace(/ +$/, "")).join("\n");
+    const source = "Hello\n\nWorld\n";
+    const edited = "Hello there \n\nWorld\n";
 
-    const result = mergeSourcePreservingEdit(source, edited, canonicalize);
+    const result = mergeSourcePreservingEdit(source, edited, stripTrailingSpaces);
+
+    expect(result).toEqual({ ok: true, markdown: "Hello there \n\nWorld\n" });
+  });
+
+  it("rejects a merge whose candidate parses differently from the edited document", () => {
+    // A stale canonical baseline makes the patch land on the wrong occurrence, so the candidate
+    // and the edited text no longer parse to the same document.
+    const result = mergeSourcePreservingEdit("note note\n", "\n", (markdown) => markdown, "note\n");
 
     expect(result).toEqual({
       ok: false,

@@ -324,6 +324,55 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertTrue(push!!.contains("after"))
     }
 
+    fun testSavingThePagesOwnEditDoesNotPushItBackToThePage() {
+        setUpBridge("# Title\n")
+        sendFromPage("ready")
+
+        sendMarkdownFromPage("# Edited Title\n")
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        assertEquals("# Edited Title\n", document.text)
+        connection.executedScripts.clear()
+
+        // Autosave of the page's write fires a VFS content change like an external edit would.
+        FileDocumentManager.getInstance().saveAllDocuments()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertFalse(
+            "saving the page's own edit must not echo the markdown back (it resets the caret)",
+            connection.executedScripts.any { it.startsWith("window.milkjSetMarkdown") },
+        )
+    }
+
+    fun testExternalDiskChangeIsStillPushedAfterAPageEdit() {
+        setUpBridge("# Title\n")
+        sendFromPage("ready")
+
+        sendMarkdownFromPage("# Edited Title\n")
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        FileDocumentManager.getInstance().saveAllDocuments()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        connection.executedScripts.clear()
+
+        WriteCommandAction.runWriteCommandAction(project) {
+            document.setText("# External Change\n")
+        }
+        FileDocumentManager.getInstance().saveAllDocuments()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        bridge.drainDebouncesForTest()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertTrue(
+            "a genuine external change must still reach the page",
+            connection.executedScripts.any {
+                it.startsWith("window.milkjSetMarkdown") && it.contains("External Change")
+            },
+        )
+    }
+
     // --- Frontend config JSON ---
 
     fun testFrontendConfigJsonEscapesPlaceholderText() {

@@ -7,7 +7,7 @@ import {
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
-import { Plugin } from "@milkdown/kit/prose/state";
+import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import { search } from "prosemirror-search";
@@ -195,13 +195,42 @@ async function createEditor() {
     if (currentMarkdown !== markdown) {
       const activeCrepe = crepe;
       bridgeSync.applyFromIde(() => {
-        activeCrepe.editor.action(replaceAll(currentMarkdown));
+        replaceAllKeepingSelection(activeCrepe, currentMarkdown);
       });
     }
   } finally {
     creatingEditor = false;
   }
   findBar.syncToView();
+}
+
+/**
+ * replaceAll rebuilds the entire ProseMirror document, which maps the selection to the document
+ * end. For content applied over the user's head (external IDE edits, roundtrip restores) put the
+ * caret back as close as possible to where it was.
+ */
+function replaceAllKeepingSelection(activeCrepe: Crepe, markdown: string) {
+  let previousAnchor: number | undefined;
+  try {
+    previousAnchor = activeCrepe.editor.ctx.get(editorViewCtx).state.selection.anchor;
+  } catch {
+    previousAnchor = undefined;
+  }
+  activeCrepe.editor.action(replaceAll(markdown));
+  if (previousAnchor === undefined) {
+    return;
+  }
+  try {
+    const view = activeCrepe.editor.ctx.get(editorViewCtx);
+    const { doc, tr } = view.state;
+    const position = Math.min(previousAnchor, doc.content.size);
+    // Bias backward: when the replacement made the text near the caret slightly shorter (e.g. the
+    // IDE stripped a trailing space on save), the caret must stay at the end of its line rather
+    // than slide forward onto the next one.
+    view.dispatch(tr.setSelection(TextSelection.near(doc.resolve(position), -1)).scrollIntoView());
+  } catch {
+    // Restoring the caret is best-effort; the content replacement already succeeded.
+  }
 }
 
 function canonicalizeMarkdown(markdown: string): string {
@@ -219,7 +248,7 @@ function restoreSourceAfterUnsafeEdit(sourceMarkdown: string) {
   currentMarkdown = sourceMarkdown;
   const activeCrepe = crepe;
   bridgeSync.applyFromIde(() => {
-    activeCrepe.editor.action(replaceAll(sourceMarkdown));
+    replaceAllKeepingSelection(activeCrepe, sourceMarkdown);
   });
 }
 
@@ -307,8 +336,12 @@ function createMermaidStreamParser(): StreamParser<null> {
 }
 
 window.milkjSetMarkdown = (markdown: string, revision: number) => {
-  bridgeSync.acceptIdeRevision(revision, markdown);
-  if (markdown === currentMarkdown) {
+  // The IDE relays autosaves of this page's own writes back as pushes. The editor's serialization
+  // (currentMarkdown) intentionally differs from the source-preserving markdown the IDE holds, so
+  // an echo must be recognized against the source we last sent — replacing the content for it
+  // would throw the caret to the end of the document after every rich-text edit.
+  const isOwnWriteEcho = bridgeSync.acceptIdeRevision(revision, markdown);
+  if (isOwnWriteEcho || markdown === currentMarkdown) {
     return;
   }
   currentMarkdown = markdown;
@@ -322,7 +355,7 @@ window.milkjSetMarkdown = (markdown: string, revision: number) => {
     // ProseMirror and the CodeMirror blocks, losing cursor and scroll.
     const activeCrepe = crepe;
     bridgeSync.applyFromIde(() => {
-      activeCrepe.editor.action(replaceAll(markdown));
+      replaceAllKeepingSelection(activeCrepe, markdown);
     });
   } else {
     void createEditor();

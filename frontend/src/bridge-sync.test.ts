@@ -43,6 +43,38 @@ describe("EditorBridgeSync", () => {
     });
   });
 
+  it("recognizes a push of the page's own last write as an echo", () => {
+    const sync = new EditorBridgeSync();
+    expect(sync.acceptIdeRevision(1, "one\n")).toBe(false);
+
+    sync.recordUserEdit();
+    expect(sync.messageForMarkdown("one two\n")).toEqual({
+      ok: true,
+      message: "markdown:1\none two\n",
+    });
+
+    // The IDE autosaves the write and relays it back as if it were an external change.
+    expect(sync.acceptIdeRevision(2, "one two\n")).toBe(true);
+    // A genuinely different external change is not an echo.
+    expect(sync.acceptIdeRevision(3, "external\n")).toBe(false);
+  });
+
+  it("keeps an in-flight user edit across an echo of the page's own write", () => {
+    const sync = new EditorBridgeSync();
+    sync.acceptIdeRevision(1, "one\n");
+    sync.recordUserEdit();
+    sync.messageForMarkdown("one two\n");
+
+    // The user keeps typing while the IDE echoes the previous write back.
+    sync.recordUserEdit();
+    expect(sync.acceptIdeRevision(2, "one two\n")).toBe(true);
+
+    expect(sync.messageForMarkdown("one two three\n")).toEqual({
+      ok: true,
+      message: "markdown:2\none two three\n",
+    });
+  });
+
   it("advances its exact-source baseline after each accepted user edit", () => {
     const sync = new EditorBridgeSync();
     sync.acceptIdeRevision(4, "one\n");

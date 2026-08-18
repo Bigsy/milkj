@@ -67,6 +67,11 @@ class MilkJBridge(
     private var trustedDiskFingerprint: DiskFingerprint? = null
     private var syncBlocked = false
     private var roundTripFailureNotified = false
+
+    // The markdown most recently written into the Document on the page's behalf. Saving that write
+    // fires a VFileContentChangeEvent like any external change would; pushing the identical text
+    // back would make the page rebuild its document (and lose the caret) after every edit.
+    private var lastPageWriteMarkdown: String? = null
     private var testDiskSnapshot: DiskSnapshot? = null
     private var testDiskVersion = 0L
 
@@ -289,6 +294,7 @@ class MilkJBridge(
             enterSyncConflict()
             return
         }
+        lastPageWriteMarkdown = markdown
         if (document.text == markdown) {
             return
         }
@@ -399,7 +405,7 @@ class MilkJBridge(
         if (pageReady && wasBlocked) {
             pushConfig()
         }
-        if (pageReady && pushResolvedContent) {
+        if (pageReady && pushResolvedContent && document.text != lastPageWriteMarkdown) {
             pushMarkdown(document.text)
         }
     }

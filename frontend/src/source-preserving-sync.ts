@@ -59,7 +59,21 @@ export function mergeSourcePreservingEdit(
     return failure("The merged Markdown could not be parsed safely.");
   }
   if (canonicalCandidate !== editedCanonicalMarkdown) {
-    return failure("The merged Markdown was not equivalent to the rich-text document.");
+    // While the user is typing, the editor can hold states that no Markdown string parses back to
+    // — e.g. a paragraph ending in the space that was just typed: serialization emits the trailing
+    // space, but parsing strips it, so no candidate can ever canonicalize to the edited string
+    // byte-for-byte. Failing here would revert the user's in-progress edit, so prove equivalence
+    // one parse round-trip further instead: the candidate and the edited text must parse to the
+    // same document.
+    let canonicalEdited: string;
+    try {
+      canonicalEdited = canonicalize(editedCanonicalMarkdown);
+    } catch {
+      return failure("The merged Markdown was not equivalent to the rich-text document.");
+    }
+    if (canonicalCandidate !== canonicalEdited) {
+      return failure("The merged Markdown was not equivalent to the rich-text document.");
+    }
   }
 
   return { ok: true, markdown: candidate };
