@@ -100,9 +100,48 @@ describe("merging a rich-text edit by aligned blocks", () => {
 
     const merged = merge(TASK_LIST, edited);
 
-    expect(merged).toContain("- [ ] first task\n- [x] second task with\n      a continuation");
-    expect(merged).not.toContain("delete this bullet");
-    expect(merged).toContain("Tail paragraph.");
+    // The junction the deletion left behind takes the source's own separator, not the editor's: a
+    // blank line there would turn this tight list loose, and Milkdown writes every bullet list
+    // loose, so canonical equivalence cannot see the difference.
+    expect(merged).toBe(`# Checklist
+
+- [ ] first task
+- [x] second task with
+      a continuation
+- [ ] last task
+
+Tail paragraph.
+`);
+    expectEquivalent(merged, edited);
+  });
+
+  it("keeps a tight list tight around an inserted item", () => {
+    const source = "Intro.\n\n* first\n* last\n\nTail.\n";
+    const edited = canonicalize("* first\n* inserted\n* last\n");
+
+    const merged = merge(source, `Intro.\n\n${edited}\nTail.\n`);
+
+    expect(merged).toBe("Intro.\n\n* first\n* inserted\n* last\n\nTail.\n");
+    expectEquivalent(merged, `Intro.\n\n${edited}\nTail.\n`);
+  });
+
+  it("keeps a loose list loose when an item is deleted", () => {
+    const source = "- a\n\n- delete me\n\n- c\n";
+    const edited = canonicalize("- a\n\n- c\n");
+
+    const merged = merge(source, edited);
+
+    expect(merged).toBe("- a\n\n- c\n");
+    expectEquivalent(merged, edited);
+  });
+
+  it("keeps a nested list's spacing when one of its items is deleted", () => {
+    const source = "- outer one\n  - inner a\n  - delete me\n  - inner c\n- outer two\n";
+    const edited = canonicalize("- outer one\n  - inner a\n  - inner c\n- outer two\n");
+
+    const merged = merge(source, edited);
+
+    expect(merged).toBe("- outer one\n  - inner a\n  - inner c\n- outer two\n");
     expectEquivalent(merged, edited);
   });
 

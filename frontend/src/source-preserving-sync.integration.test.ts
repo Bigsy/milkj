@@ -220,6 +220,21 @@ Trailing paragraph.
     expect(result).toEqual({ ok: true, markdown: source.replace("- three", "- three, edited") });
   });
 
+  it("leaves a tight list tight when only the block merge can produce a candidate", () => {
+    // Milkdown serializes every bullet list loose, and canonical equivalence cannot see bullet
+    // spread — so a merge that took the editor's spacing at the deleted bullet's junction would
+    // quietly rewrite a tight source list as a loose one with nothing left to catch it.
+    const source = "# Steps\n\n- one\n- inserted by the IDE\n- two\n- three\n";
+    const staleBaseline = canonicalize("# Steps\n\n- one\n- two\n- three\n");
+    const edited = canonicalize(canonicalize(source).replace("* two\n\n", ""));
+
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline).ok).toBe(false);
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline, split)).toEqual({
+      ok: true,
+      markdown: "# Steps\n\n- one\n- inserted by the IDE\n- three\n",
+    });
+  });
+
   it("still refuses to touch frontmatter when the block merge produces the candidate", () => {
     const source = `---
 title: MilkJ

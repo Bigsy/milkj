@@ -124,9 +124,13 @@ function mergedBlockText(
 }
 
 /**
- * The text between the previous emitted block and this one. Blocks still adjacent in the source keep
- * the source's own gap (its blank lines, a tight list's single newline); otherwise the editor's gap
- * between the same two blocks describes the new structure.
+ * The text between the previous emitted block and this one. A block keeps the gap the source wrote
+ * in front of it, and a block the edit inserted borrows the gap the source wrote after its
+ * predecessor: either way the separator is the one this container uses, which the editor's gap cannot
+ * be trusted to describe. Milkdown serializes every bullet list loose, so taking the editor's gap at
+ * a junction it touched turns a tight source list loose — and bullet spread is invisible to canonical
+ * equivalence, so nothing downstream would catch it. Only a junction the source knows nothing about,
+ * such as a block appended past its last one, falls back to the editor's own gap.
  */
 function separatorBefore(
   context: MergeContext,
@@ -138,21 +142,18 @@ function separatorBefore(
   if (!previous) {
     return "";
   }
-  if (slot.sourceIndex === previous.sourceIndex + 1) {
-    const before = sourceBlocks[previous.sourceIndex];
-    const after = sourceBlocks[slot.sourceIndex];
-    if (before && after) {
-      return context.source.slice(before.end, after.start);
-    }
+  const sourceGapBefore = (index: number): string | undefined => {
+    const before = sourceBlocks[index - 1];
+    const after = sourceBlocks[index];
+    return before && after ? context.source.slice(before.end, after.start) : undefined;
+  };
+  const sourceGap = sourceGapBefore(slot.sourceIndex) ?? sourceGapBefore(previous.sourceIndex + 1);
+  if (sourceGap !== undefined) {
+    return sourceGap;
   }
-  if (slot.editedIndex === previous.editedIndex + 1) {
-    const before = editedBlocks[previous.editedIndex];
-    const after = editedBlocks[slot.editedIndex];
-    if (before && after) {
-      return context.edited.slice(before.end, after.start);
-    }
-  }
-  return "\n\n";
+  const before = editedBlocks[previous.editedIndex];
+  const after = editedBlocks[slot.editedIndex];
+  return before && after ? context.edited.slice(before.end, after.start) : "\n\n";
 }
 
 /**
