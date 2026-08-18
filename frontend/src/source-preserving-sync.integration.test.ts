@@ -116,6 +116,41 @@ Edit this sentence far below the table.
     });
   });
 
+  it("merges a row deletion inside a table whose canonical form is heavily padded", () => {
+    // Regression: the deleted hunk's text is the CANONICAL row — padded to the widest column —
+    // which never exists in the unpadded source, so fuzzy patching can't apply it anywhere. The
+    // line-granular fallback replaces the edited table with the editor's version of it while
+    // everything outside the table keeps its source bytes (the __bold__ paragraph proves that).
+    const longCell = "an intentionally long value that makes the canonical serializer pad every " +
+      "other row in this column out to a couple of hundred characters of alignment spaces";
+    const source = `# Runbook
+
+Keep __this__ formatting.
+
+| Thing | Value |
+| --- | --- |
+| note | ${longCell} |
+| keep one | value 1 |
+| delete me | value 2 |
+| keep two | value 3 |
+
+Trailing paragraph.
+`;
+    const canonical = canonicalize(source);
+    const deletedRow = canonical.match(/^\| delete me[^\n]*\n/m)![0];
+    expect(deletedRow.length).toBeGreaterThan(100);
+    // Re-canonicalize so the remaining rows re-pad, exactly as the editor serializes a deletion.
+    const edited = canonicalize(canonical.replace(deletedRow, ""));
+
+    const result = mergeSourcePreservingEdit(source, edited, canonicalize);
+
+    // The edited table takes the editor's (padded) form; untouched blocks keep source formatting.
+    expect(result).toEqual({
+      ok: true,
+      markdown: edited.replace("Keep **this** formatting.", "Keep __this__ formatting."),
+    });
+  });
+
   it("merges the mid-typing state where the line ends in a just-typed space", () => {
     // Regression: pausing after typing a space serialized "Hello there \n…", whose trailing space
     // does not survive a parse round-trip; the merge rejected it and the editor content was

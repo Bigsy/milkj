@@ -33,6 +33,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.14</b>
+    <ul>
+        <li>Structural edits inside heavily formatted regions (e.g. deleting a table row) no longer fail to sync and get reverted: the edited region adopts the editor's formatting while everything else keeps its original bytes.</li>
+    </ul>
+    <br/>
     <b>0.1.13</b>
     <ul>
         <li>Edits in long documents below wide tables (or other heavily normalized Markdown) no longer fail to sync and get reverted.</li>

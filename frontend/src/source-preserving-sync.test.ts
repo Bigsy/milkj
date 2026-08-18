@@ -101,15 +101,13 @@ Editable paragraph.
     expect(result).toEqual({ ok: true, markdown: "Hello there \n\nWorld\n" });
   });
 
-  it("rejects a merge whose candidate parses differently from the edited document", () => {
-    // A stale canonical baseline makes the patch land on the wrong occurrence, so the candidate
-    // and the edited text no longer parse to the same document.
+  it("recovers from a stale canonical baseline with a clean equivalent result", () => {
+    // A stale canonical baseline makes the fuzzy patch land on the wrong occurrence, producing a
+    // mangled candidate that fails the equivalence check. The line-granular fallback must still
+    // produce a result that parses to exactly what the editor shows.
     const result = mergeSourcePreservingEdit("note note\n", "\n", (markdown) => markdown, "note\n");
 
-    expect(result).toEqual({
-      ok: false,
-      reason: "The merged Markdown was not equivalent to the rich-text document.",
-    });
+    expect(result).toEqual({ ok: true, markdown: "\n" });
   });
 
   it("returns the exact source for a no-op normalized update", () => {

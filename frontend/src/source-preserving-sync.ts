@@ -59,40 +59,211 @@ export function mergeSourcePreservingEdit(
   }
   const [patchedCandidate, applied] = dmp.patch_apply(patches, sourceMarkdown);
 
-  if (applied.some((didApply) => !didApply)) {
-    return failure("MilkJ could not map the rich-text change onto the original Markdown.");
+  const rawCandidates: string[] = [];
+  if (!applied.some((didApply) => !didApply)) {
+    rawCandidates.push(patchedCandidate);
   }
-  const candidate = preserveSourceLineEndings(sourceMarkdown, patchedCandidate);
+  // Fuzzy patching cannot handle an edit INSIDE a heavily normalized region: the hunk's own text
+  // is canonical (a table row padded to the widest column, say) and does not exist in the source
+  // in that form, no matter where the matcher looks. Fall back to a line-granular merge: regions
+  // the edit did not touch keep their source lines byte-for-byte, regions it did touch take the
+  // editor's lines verbatim. The equivalence check below vets either candidate before it is
+  // trusted.
+  rawCandidates.push(
+    mergeEditByLines(dmp, canonicalBefore, editedCanonicalMarkdown, sourceMarkdown),
+  );
 
-  if (!leadingFrontmatterWasPreserved(sourceMarkdown, candidate)) {
-    return failure("The rich-text change would modify the document frontmatter.");
-  }
+  let canonicalEdited: string | undefined;
+  let reason = "MilkJ could not map the rich-text change onto the original Markdown.";
+  const tried = new Set<string>();
+  for (const rawCandidate of rawCandidates) {
+    if (tried.has(rawCandidate)) {
+      continue;
+    }
+    tried.add(rawCandidate);
+    const candidate = preserveSourceLineEndings(sourceMarkdown, rawCandidate);
 
-  let canonicalCandidate: string;
-  try {
-    canonicalCandidate = canonicalize(candidate);
-  } catch {
-    return failure("The merged Markdown could not be parsed safely.");
-  }
-  if (canonicalCandidate !== editedCanonicalMarkdown) {
-    // While the user is typing, the editor can hold states that no Markdown string parses back to
-    // — e.g. a paragraph ending in the space that was just typed: serialization emits the trailing
-    // space, but parsing strips it, so no candidate can ever canonicalize to the edited string
-    // byte-for-byte. Failing here would revert the user's in-progress edit, so prove equivalence
-    // one parse round-trip further instead: the candidate and the edited text must parse to the
-    // same document.
-    let canonicalEdited: string;
+    if (!leadingFrontmatterWasPreserved(sourceMarkdown, candidate)) {
+      reason = "The rich-text change would modify the document frontmatter.";
+      continue;
+    }
+
+    let canonicalCandidate: string;
     try {
-      canonicalEdited = canonicalize(editedCanonicalMarkdown);
+      canonicalCandidate = canonicalize(candidate);
     } catch {
-      return failure("The merged Markdown was not equivalent to the rich-text document.");
+      reason = "The merged Markdown could not be parsed safely.";
+      continue;
     }
-    if (canonicalCandidate !== canonicalEdited) {
-      return failure("The merged Markdown was not equivalent to the rich-text document.");
+    if (canonicalCandidate !== editedCanonicalMarkdown) {
+      // While the user is typing, the editor can hold states that no Markdown string parses back
+      // to — e.g. a paragraph ending in the space that was just typed: serialization emits the
+      // trailing space, but parsing strips it, so no candidate can ever canonicalize to the edited
+      // string byte-for-byte. Failing here would revert the user's in-progress edit, so prove
+      // equivalence one parse round-trip further instead: the candidate and the edited text must
+      // parse to the same document.
+      try {
+        canonicalEdited ??= canonicalize(editedCanonicalMarkdown);
+      } catch {
+        reason = "The merged Markdown was not equivalent to the rich-text document.";
+        continue;
+      }
+      if (canonicalCandidate !== canonicalEdited) {
+        reason = "The merged Markdown was not equivalent to the rich-text document.";
+        continue;
+      }
+    }
+
+    return { ok: true, markdown: candidate };
+  }
+
+  return failure(reason);
+}
+
+/**
+ * Merges the canonical-text edit into the source at line granularity. The canonical "before" text
+ * is the pivot: each of its lines corresponds to source lines (via a line diff of the two) and has
+ * a fate in the edited text (via a second line diff). Canonical line runs the edit left untouched
+ * emit their source lines byte-for-byte; runs the edit touched emit the editor's lines verbatim.
+ * Every output line is therefore either exact source or exact editor output — never a splice of
+ * the two — and heavy normalization drift (padded tables, escaping) cannot corrupt bytes the way
+ * character-level patching can. The caller must validate the result by canonical equivalence.
+ */
+function mergeEditByLines(
+  dmp: DiffMatchPatch,
+  canonicalBefore: string,
+  editedCanonicalMarkdown: string,
+  sourceMarkdown: string,
+): string {
+  const toSource = lineDiff(dmp, canonicalBefore, sourceMarkdown);
+  const toEdited = lineDiff(dmp, canonicalBefore, editedCanonicalMarkdown);
+
+  // For every canonical line: the source text of the run it belongs to, or its own text when it
+  // maps to source 1:1. Source-only lines (no canonical counterpart) anchor before a canonical
+  // line index.
+  type Run = { start: number; end: number; sourceText: string };
+  const lineRun: Array<Run | undefined> = [];
+  const equalLine: Array<string | undefined> = [];
+  const sourceOnlyAt = new Map<number, string>();
+  {
+    let index = 0;
+    let pendingDeleted: { start: number; end: number } | undefined;
+    for (const [operation, text] of toSource) {
+      if (operation === 0) {
+        pendingDeleted = undefined;
+        for (const line of splitKeepingNewlines(text)) {
+          equalLine[index++] = line;
+        }
+      } else if (operation === -1) {
+        const lineCount = splitKeepingNewlines(text).length;
+        pendingDeleted = { start: index, end: index + lineCount };
+        const run: Run = { ...pendingDeleted, sourceText: "" };
+        for (let i = run.start; i < run.end; i++) {
+          lineRun[i] = run;
+        }
+        index = run.end;
+      } else if (pendingDeleted) {
+        // Source lines replacing the just-deleted canonical lines: one replace run.
+        const run = lineRun[pendingDeleted.start]!;
+        run.sourceText += text;
+        pendingDeleted = undefined;
+      } else {
+        sourceOnlyAt.set(index, (sourceOnlyAt.get(index) ?? "") + text);
+      }
     }
   }
 
-  return { ok: true, markdown: candidate };
+  // For every canonical line: whether the edit kept it, plus editor-inserted text anchored before
+  // a canonical line index.
+  const lineKept: boolean[] = [];
+  const insertedAt = new Map<number, string>();
+  {
+    let index = 0;
+    for (const [operation, text] of toEdited) {
+      if (operation === 1) {
+        insertedAt.set(index, (insertedAt.get(index) ?? "") + text);
+        continue;
+      }
+      const lineCount = splitKeepingNewlines(text).length;
+      for (let i = 0; i < lineCount; i++) {
+        lineKept[index++] = operation === 0;
+      }
+    }
+  }
+
+  const totalLines = Math.max(lineRun.length, equalLine.length, lineKept.length);
+  let result = "";
+  for (let index = 0; index <= totalLines; index++) {
+    result += sourceOnlyAt.get(index) ?? "";
+    result += insertedAt.get(index) ?? "";
+    if (index === totalLines) {
+      break;
+    }
+    const run = lineRun[index];
+    if (!run) {
+      // 1:1 line: emit the source byte-equal line if the edit kept it.
+      if (lineKept[index]) {
+        result += equalLine[index] ?? "";
+      }
+      continue;
+    }
+    if (index !== run.start) {
+      continue;
+    }
+    let dirty = false;
+    for (let i = run.start; i < run.end && !dirty; i++) {
+      dirty = !lineKept[i] || (i > run.start && insertedAt.has(i));
+    }
+    if (!dirty) {
+      result += run.sourceText;
+      continue;
+    }
+    // The edit touched this normalized region: emit the editor's version of it.
+    for (let i = run.start; i < run.end; i++) {
+      if (i > run.start) {
+        result += insertedAt.get(i) ?? "";
+      }
+      if (lineKept[i]) {
+        result += canonicalLineAt(toSource, i);
+      }
+    }
+  }
+  return result;
+}
+
+/** The canonical-before text's line at the given index, recovered from the line diff. */
+function canonicalLineAt(toSource: Array<[number, string]>, target: number): string {
+  let index = 0;
+  for (const [operation, text] of toSource) {
+    if (operation === 1) {
+      continue;
+    }
+    for (const line of splitKeepingNewlines(text)) {
+      if (index === target) {
+        return line;
+      }
+      index++;
+    }
+  }
+  return "";
+}
+
+function splitKeepingNewlines(text: string): string[] {
+  const lines = text.split("\n");
+  const last = lines.pop()!;
+  const result = lines.map((line) => `${line}\n`);
+  if (last !== "") {
+    result.push(last);
+  }
+  return result;
+}
+
+/** Line-mode diff: each diff chunk's text is a whole number of lines. */
+function lineDiff(dmp: DiffMatchPatch, before: string, after: string): Array<[number, string]> {
+  const encoded = dmp.diff_linesToChars_(before, after);
+  const diffs = dmp.diff_main(encoded.chars1, encoded.chars2, false);
+  dmp.diff_charsToLines_(diffs, encoded.lineArray);
+  return diffs as Array<[number, string]>;
 }
 
 function preserveSourceLineEndings(source: string, candidate: string): string {
