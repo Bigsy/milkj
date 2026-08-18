@@ -6,13 +6,14 @@ import {
 } from "@codemirror/language";
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
-import { editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
+import { editorViewCtx, parserCtx, remarkCtx, serializerCtx } from "@milkdown/kit/core";
 import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
+import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
@@ -90,7 +91,7 @@ let mermaidRenderSeq = 0;
 // window: only a document change that did not happen during an IDE apply may travel back. The IDE
 // also attaches a monotonically increasing revision, so even an unusually delayed callback cannot
 // overwrite a newer document.
-const bridgeSync = new EditorBridgeSync(canonicalizeMarkdown);
+const bridgeSync = new EditorBridgeSync(canonicalizeMarkdown, splitMarkdownBlocksForSync);
 
 function markUserEdit() {
   bridgeSync.recordUserEdit();
@@ -241,6 +242,18 @@ function canonicalizeMarkdown(markdown: string): string {
     const document = ctx.get(parserCtx)(markdown);
     return ctx.get(serializerCtx)(document);
   });
+}
+
+/** Splits with the editor's own remark processor, so blocks carry the syntax Crepe itself parses. */
+function splitMarkdownBlocksForSync(markdown: string): MarkdownBlock | undefined {
+  if (!crepe || creatingEditor) {
+    return undefined;
+  }
+  try {
+    return crepe.editor.action((ctx) => splitMarkdownBlocks(ctx.get(remarkCtx), markdown));
+  } catch {
+    return undefined;
+  }
 }
 
 function restoreSourceAfterUnsafeEdit(sourceMarkdown: string) {

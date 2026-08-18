@@ -1,3 +1,4 @@
+import type { MarkdownBlockSplitter } from "./markdown-blocks";
 import {
   mergeSourcePreservingEdit,
   type MarkdownCanonicalizer,
@@ -15,7 +16,10 @@ export class EditorBridgeSync {
   private sourceMarkdown = "";
   private canonicalSource: string | undefined;
 
-  constructor(private readonly canonicalize: MarkdownCanonicalizer = (markdown) => markdown) {}
+  constructor(
+    private readonly canonicalize: MarkdownCanonicalizer = (markdown) => markdown,
+    private readonly splitBlocks?: MarkdownBlockSplitter,
+  ) {}
 
   /**
    * Accepts a push from the IDE. Returns true when the pushed text is exactly the source this page
@@ -65,6 +69,7 @@ export class EditorBridgeSync {
       markdown,
       this.canonicalize,
       this.canonicalSource,
+      this.splitBlocks,
     );
     if (!merged.ok) {
       return {

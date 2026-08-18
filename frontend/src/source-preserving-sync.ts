@@ -1,4 +1,6 @@
 import DiffMatchPatch from "diff-match-patch";
+import { mergeEditByBlocks } from "./block-merge";
+import type { MarkdownBlockSplitter } from "./markdown-blocks";
 
 export type MarkdownCanonicalizer = (markdown: string) => string;
 
@@ -11,15 +13,17 @@ export type SourceMergeResult =
  *
  * Crepe parses Markdown into a document model and serializes that model back into its preferred
  * formatting. Applying the editor's serialized text directly would therefore rewrite unrelated
- * source (and can destroy syntax which Crepe does not model). Instead, create a patch between the
- * normalized before/after documents, apply only that patch to the original source, then prove the
- * candidate is equivalent by parsing and serializing it through the active Milkdown schema.
+ * source (and can destroy syntax which Crepe does not model). Instead, reconstruct the source with
+ * only the edit applied, and trust no reconstruction until it is proven equivalent to the editor's
+ * document by parsing and serializing it through the active Milkdown schema. Several strategies
+ * produce a candidate; the first one that proves equivalent wins.
  */
 export function mergeSourcePreservingEdit(
   sourceMarkdown: string,
   editedCanonicalMarkdown: string,
   canonicalize: MarkdownCanonicalizer,
   knownCanonicalSource?: string,
+  splitBlocks?: MarkdownBlockSplitter,
 ): SourceMergeResult {
   let canonicalBefore: string;
   if (knownCanonicalSource !== undefined) {
@@ -59,9 +63,11 @@ export function mergeSourcePreservingEdit(
   }
   const [patchedCandidate, applied] = dmp.patch_apply(patches, sourceMarkdown);
 
-  const rawCandidates: string[] = [];
+  // Candidates are produced lazily and in increasing blast radius: a later one only runs when
+  // every earlier one failed the equivalence check below.
+  const rawCandidates: Array<() => string | undefined> = [];
   if (!applied.some((didApply) => !didApply)) {
-    rawCandidates.push(patchedCandidate);
+    rawCandidates.push(() => patchedCandidate);
   }
   // Fuzzy patching cannot handle an edit INSIDE a heavily normalized region: the hunk's own text
   // is canonical (a table row padded to the widest column, say) and does not exist in the source
@@ -69,15 +75,29 @@ export function mergeSourcePreservingEdit(
   // the edit did not touch keep their source lines byte-for-byte, regions it did touch take the
   // editor's lines verbatim. The equivalence check below vets either candidate before it is
   // trusted.
-  rawCandidates.push(
-    mergeEditByLines(dmp, canonicalBefore, editedCanonicalMarkdown, sourceMarkdown),
+  rawCandidates.push(() =>
+    mergeEditByLines(dmp, canonicalBefore, editedCanonicalMarkdown, sourceMarkdown)
   );
+  // Last resort: align the two documents by parsed block instead of by text. It is the only
+  // strategy that cannot mistake where an edit landed, but it rewrites a whole edited block (or
+  // list item) in the editor's formatting, so the line merge gets first refusal.
+  if (splitBlocks) {
+    rawCandidates.push(() =>
+      mergeEditByBlocks(dmp, sourceMarkdown, editedCanonicalMarkdown, splitBlocks, canonicalize)
+    );
+  }
 
   let canonicalEdited: string | undefined;
   let reason = "MilkJ could not map the rich-text change onto the original Markdown.";
   const tried = new Set<string>();
-  for (const rawCandidate of rawCandidates) {
-    if (tried.has(rawCandidate)) {
+  for (const produceCandidate of rawCandidates) {
+    let rawCandidate: string | undefined;
+    try {
+      rawCandidate = produceCandidate();
+    } catch {
+      continue;
+    }
+    if (rawCandidate === undefined || tried.has(rawCandidate)) {
       continue;
     }
     tried.add(rawCandidate);

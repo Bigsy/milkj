@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { Editor, editorViewCtx, parserCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
+import { Editor, editorViewCtx, parserCtx, remarkCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { TextSelection } from "@milkdown/kit/prose/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { mergeSourcePreservingEdit } from "./source-preserving-sync";
 
 describe("source-preserving merge with the Milkdown parser", () => {
@@ -28,6 +29,10 @@ describe("source-preserving merge with the Milkdown parser", () => {
       const document = ctx.get(parserCtx)(markdown);
       return ctx.get(serializerCtx)(document);
     });
+  }
+
+  function split(markdown: string): MarkdownBlock | undefined {
+    return splitMarkdownBlocks(editor.ctx.get(remarkCtx), markdown);
   }
 
   it("preserves real YAML frontmatter while editing body prose", () => {
@@ -170,5 +175,73 @@ Trailing paragraph.
     const result = mergeSourcePreservingEdit(source, serialized, canonicalize);
 
     expect(result).toEqual({ ok: true, markdown: "Hello there \n\nWorld\n" });
+  });
+
+  it("merges against a stale baseline once blocks can be aligned", () => {
+    // The IDE changed the file while the edit was in flight, so the canonical baseline describes a
+    // document that no longer exists. Both string strategies diff from that baseline and reconstruct
+    // the older document; the block merge reads only the real source and the editor's text, so it is
+    // the one strategy a stale baseline cannot mislead.
+    const staleSource = "# Notes\n\nKeep __this__ line.\n\nSecond paragraph.\n";
+    const source = "# Notes\n\nKeep __this__ line.\n\nInserted by the IDE.\n\nSecond paragraph.\n";
+    const edited = canonicalize(source).replace("Second paragraph.", "Second paragraph, edited.");
+    const staleBaseline = canonicalize(staleSource);
+
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline)).toEqual({
+      ok: false,
+      reason: "The merged Markdown was not equivalent to the rich-text document.",
+    });
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline, split)).toEqual({
+      ok: true,
+      markdown: source.replace("Second paragraph.", "Second paragraph, edited."),
+    });
+  });
+
+  it("keeps the source bullets a block-aligned merge did not touch", () => {
+    const source = `# Steps
+
+- one
+- inserted by the IDE
+- two
+- three
+`;
+    const edited = canonicalize(source).replace("* three", "* three, edited");
+
+    // Same stale baseline, this time inside a list: the untouched bullets keep their source bytes
+    // and their tight spacing instead of the whole list taking the editor's formatting.
+    const result = mergeSourcePreservingEdit(
+      source,
+      edited,
+      canonicalize,
+      canonicalize("# Steps\n\n- one\n- two\n- three\n"),
+      split,
+    );
+
+    expect(result).toEqual({ ok: true, markdown: source.replace("- three", "- three, edited") });
+  });
+
+  it("still refuses to touch frontmatter when the block merge produces the candidate", () => {
+    const source = `---
+title: MilkJ
+---
+
+# Plan
+
+Body text.
+`;
+    const edited = canonicalize(source).replace("title: MilkJ", "title: Changed in rich text");
+
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, undefined, split)).toEqual({
+      ok: false,
+      reason: "The rich-text change would modify the document frontmatter.",
+    });
+  });
+
+  it("falls back to the string strategies when a document cannot be split", () => {
+    const source = "# Heading\n\nKeep __this__ text.\n";
+    const edited = canonicalize(source).replace("text", "prose");
+
+    expect(mergeSourcePreservingEdit(source, edited, canonicalize, undefined, () => undefined))
+      .toEqual({ ok: true, markdown: "# Heading\n\nKeep __this__ prose.\n" });
   });
 });
