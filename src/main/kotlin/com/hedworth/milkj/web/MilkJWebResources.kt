@@ -1,6 +1,11 @@
 package com.hedworth.milkj.web
 
+import com.hedworth.milkj.navigation.strictPercentDecode
 import com.intellij.ui.jcef.JBCefApp
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.StandardFileSystems
+import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFile
 import org.cef.CefApp
 import org.cef.browser.CefBrowser
 import org.cef.browser.CefFrame
@@ -13,12 +18,26 @@ import org.cef.misc.StringRef
 import org.cef.network.CefRequest
 import org.cef.network.CefResponse
 import java.net.URI
+import java.nio.file.Path
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 object MilkJWebResources {
     private const val HOST = "milkj.localhost"
+    private const val LOCAL_IMAGE_PREFIX = "/local-image/"
     const val indexUrl: String = "http://$HOST/index.html"
     private val registered = AtomicBoolean(false)
+    private val localImages = ConcurrentHashMap<String, LocalImageResolver>()
+
+    class LocalImageHandle internal constructor(
+        val baseUrl: String,
+        private val token: String,
+    ) : AutoCloseable {
+        override fun close() {
+            localImages.remove(token)
+        }
+    }
 
     fun registerSchemeHandler() {
         if (!registered.compareAndSet(false, true)) {
@@ -27,6 +46,25 @@ object MilkJWebResources {
 
         JBCefApp.getInstance()
         CefApp.getInstance().registerSchemeHandlerFactory("http", HOST, MilkJResourceHandlerFactory)
+    }
+
+    /** Registers a short-lived, project-confined route for images referenced by this Markdown file. */
+    fun registerLocalImages(project: Project, markdownFile: VirtualFile): LocalImageHandle? {
+        if (markdownFile.fileSystem.protocol != StandardFileSystems.FILE_PROTOCOL) return null
+        val markdownDirectory = runCatching {
+            VfsUtilCore.virtualToIoFile(markdownFile).toPath().parent
+        }.getOrNull() ?: return null
+        val projectDirectory = project.basePath?.let(Path::of)
+        val resolver = runCatching {
+            LocalImageResolver(markdownDirectory, projectDirectory)
+        }.getOrNull() ?: return null
+
+        val token = UUID.randomUUID().toString()
+        localImages[token] = resolver
+        return LocalImageHandle(
+            baseUrl = "http://$HOST${LOCAL_IMAGE_PREFIX}$token/",
+            token = token,
+        )
     }
 
     private object MilkJResourceHandlerFactory : CefSchemeHandlerFactory {
@@ -99,18 +137,27 @@ object MilkJWebResources {
     ) {
         companion object {
             fun from(url: String?): ResourceResponse {
+                localImageRequest(url)?.let { (token, source) ->
+                    val content = localImages[token]?.read(source)
+                    return if (content == null) {
+                        notFound("MilkJ local image not found")
+                    } else {
+                        ResourceResponse(
+                            status = 200,
+                            statusText = "OK",
+                            mimeType = content.mimeType,
+                            bytes = content.bytes,
+                        )
+                    }
+                }
+
                 val resourcePath = resourcePath(url)
                 val bytes = MilkJWebResources::class.java.classLoader
                     .getResourceAsStream(resourcePath)
                     ?.use { it.readBytes() }
 
                 if (bytes == null) {
-                    return ResourceResponse(
-                        status = 404,
-                        statusText = "Not Found",
-                        mimeType = "text/plain",
-                        bytes = "MilkJ resource not found: $resourcePath".toByteArray(),
-                    )
+                    return notFound("MilkJ resource not found: $resourcePath")
                 }
 
                 return ResourceResponse(
@@ -120,6 +167,27 @@ object MilkJWebResources {
                     bytes = bytes,
                 )
             }
+
+            private fun localImageRequest(url: String?): Pair<String, String>? {
+                val rawPath = url
+                    ?.let { runCatching { URI(it).rawPath }.getOrNull() }
+                    ?.takeIf { it.startsWith(LOCAL_IMAGE_PREFIX) }
+                    ?: return null
+                val route = rawPath.removePrefix(LOCAL_IMAGE_PREFIX)
+                val separator = route.indexOf('/')
+                if (separator <= 0 || separator == route.lastIndex) return null
+                val token = route.substring(0, separator)
+                val encodedSource = route.substring(separator + 1)
+                val source = runCatching { strictPercentDecode(encodedSource) }.getOrNull() ?: return null
+                return token to source
+            }
+
+            private fun notFound(message: String): ResourceResponse = ResourceResponse(
+                status = 404,
+                statusText = "Not Found",
+                mimeType = "text/plain",
+                bytes = message.toByteArray(),
+            )
 
             private fun resourcePath(url: String?): String {
                 val path = url

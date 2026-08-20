@@ -3,6 +3,7 @@ package com.hedworth.milkj.editor
 import com.hedworth.milkj.bridge.JcefBrowserConnection
 import com.hedworth.milkj.bridge.MilkJBridge
 import com.hedworth.milkj.web.MilkJWebResources
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
 import com.intellij.openapi.project.Project
@@ -55,10 +56,19 @@ class MilkJEditor(
         browser = newBrowser
 
         MilkJWebResources.registerSchemeHandler()
+        val localImages = MilkJWebResources.registerLocalImages(project, file)
+        if (localImages != null) {
+            Disposer.register(this, Disposable { localImages.close() })
+        }
 
         val connection = JcefBrowserConnection(newBrowser)
         Disposer.register(this, connection)
-        val bridge = MilkJBridge(project, file, connection)
+        val bridge = MilkJBridge(
+            project,
+            file,
+            connection,
+            localImageBaseUrl = localImages?.baseUrl,
+        )
         Disposer.register(this, bridge)
         bridge.install()
 

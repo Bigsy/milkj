@@ -54,6 +54,7 @@ class MilkJBridge(
     private val file: VirtualFile,
     private val connection: MilkJBrowserConnection,
     navigator: FileLinkNavigator? = null,
+    private val localImageBaseUrl: String? = null,
 ) : Disposable {
     private val fileLinkNavigator: FileLinkNavigator
     private val settings: MilkJSettings = MilkJSettings.getInstance()
@@ -344,7 +345,11 @@ class MilkJBridge(
     }
 
     private fun pushConfig() {
-        val configJson = frontendConfigJson(settings.state, readonly = !file.isWritable || syncBlocked)
+        val configJson = frontendConfigJson(
+            settings.state,
+            readonly = !file.isWritable || syncBlocked,
+            localImageBaseUrl = localImageBaseUrl,
+        )
         executeJavaScript("window.milkjApplyConfig?.($configJson);")
     }
 
@@ -476,7 +481,11 @@ class MilkJBridge(
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
         private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024
 
-        internal fun frontendConfigJson(state: MilkJSettings.State, readonly: Boolean): String {
+        internal fun frontendConfigJson(
+            state: MilkJSettings.State,
+            readonly: Boolean,
+            localImageBaseUrl: String? = null,
+        ): String {
             val effectiveTheme = when (state.theme) {
                 MilkJSettings.ThemeMode.LIGHT -> "light"
                 MilkJSettings.ThemeMode.DARK -> "dark"
@@ -505,6 +514,9 @@ class MilkJBridge(
                     append(data.toJsonString())
                 }
                 append("],")
+                if (localImageBaseUrl != null) {
+                    append("\"localImageBaseUrl\":").append(localImageBaseUrl.toJsonString()).append(",")
+                }
                 append("\"readonly\":").append(readonly)
                 append("}")
             }

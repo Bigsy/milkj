@@ -163,9 +163,21 @@ $$
 \int_0^1 x^2 dx = \frac{1}{3}
 $$
 
-## Image
+## Images
 
-Embedded image:
+Select each rendered image by clicking it or moving the caret onto it. MilkJ should reveal a
+Markdown source field with the image URL selected. Change the URL and press Enter; press Escape to
+cancel. The local and remote examples should both render.
+
+Project-local image (resolved relative to this Markdown file):
+
+![1.00](../src/main/resources/META-INF/pluginIcon.svg "Local MilkJ plugin icon")
+
+Remote image:
+
+![1.00](https://raw.githubusercontent.com/Bigsy/milkj/main/src/main/resources/META-INF/pluginIcon.svg "Remote MilkJ plugin icon")
+
+Embedded data URL image:
 
 ![1.00](data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%22320%22%20height=%22120%22%20viewBox=%220%200%20320%20120%22%3E%3Crect%20width=%22320%22%20height=%22120%22%20rx=%2212%22%20fill=%22%2337618e%22/%3E%3Ccircle%20cx=%2270%22%20cy=%2260%22%20r=%2234%22%20fill=%22%23fdfcff%22/%3E%3Ctext%20x=%22125%22%20y=%2268%22%20font-family=%22Arial%2CHelvetica%2Csans-serif%22%20font-size=%2232%22%20font-weight=%22700%22%20fill=%22%23fdfcff%22%3EMilkJ%3C/text%3E%3C/svg%3E)
 

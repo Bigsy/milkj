@@ -27,6 +27,7 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 - Mermaid diagram previews for `mermaid` fenced code blocks.
 - Mermaid language support in the code-block language picker.
 - Math rendering via Crepe's built-in LaTeX support.
+- Remote and project-local image rendering, with caret-aware Markdown source editing for selected images.
 - Tables, task lists, headings, links, images, blockquotes, code blocks, and common Markdown formatting.
 - Code blocks with syntax highlighting and language selection.
 - Configurable default Markdown editor: open Markdown files with the built-in editor first, or with MilkJ first.

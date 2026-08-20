@@ -13,6 +13,12 @@ import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
+import {
+  createImageSourceEditorPlugin,
+  parseImageSource,
+  serializeImageNode,
+} from "./image-source-editor";
+import { resolveImageDomUrl } from "./image-urls";
 import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
@@ -56,6 +62,7 @@ interface MilkJConfig {
   proofingDialect: ProofingDialect;
   customDictionary: string[];
   weirpacks: string[];
+  localImageBaseUrl?: string;
 }
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -80,6 +87,7 @@ let currentMermaidTheme: MilkJMermaidTheme = "AUTO";
 // editor never flashes Crepe's built-in "Please enter..." text.
 let currentPlaceholder = "";
 let currentReadonly = false;
+let currentLocalImageBaseUrl: string | undefined;
 let crepe: Crepe | undefined;
 let editorReady = false;
 let creatingEditor = false;
@@ -161,6 +169,12 @@ async function createEditor() {
             // placeholder until applyPreview delivers the diagram.
           },
         },
+        [CrepeFeature.ImageBlock]: {
+          // Browser security prevents an http-backed JCEF page from loading file:// paths. Local
+          // Markdown paths are mapped to a project-scoped endpoint supplied by the IDE; remote,
+          // data, and blob URLs pass through unchanged.
+          proxyDomURL: (src) => resolveImageDomUrl(src, currentLocalImageBaseUrl),
+        },
       },
     });
     crepe.editor.use($prose(() => search()));
@@ -175,6 +189,20 @@ async function createEditor() {
     })));
     crepe.editor.use($prose(() => proofingController.createPlugin()));
     crepe.editor.use($prose(() => createProjectLinksPlugin()));
+    crepe.editor.use($prose(() => createImageSourceEditorPlugin({
+      codec: {
+        serialize: (node, schema) => serializeImageNode(
+          node,
+          schema,
+          (document) => crepe!.editor.ctx.get(serializerCtx)(document),
+        ),
+        parse: (source, kind) => parseImageSource(
+          source,
+          kind,
+          (markdown) => crepe!.editor.ctx.get(parserCtx)(markdown),
+        ),
+      },
+    })));
     await crepe.create();
     crepe.setReadonly(currentReadonly);
     crepe.on((listener) => {
@@ -402,6 +430,7 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
   currentMermaidTheme = config.mermaidTheme;
   currentPlaceholder = config.placeholder;
   currentReadonly = config.readonly === true;
+  currentLocalImageBaseUrl = config.localImageBaseUrl;
   crepe?.setReadonly(currentReadonly);
   findBar.setReadonly(currentReadonly);
   proofingController.configure(
@@ -676,6 +705,60 @@ style.textContent = `
     color: var(--crepe-color-error);
     font-family: var(--crepe-font-code);
     white-space: pre-wrap;
+  }
+
+  .milkj-image-source-editor {
+    position: fixed;
+    z-index: 1100;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--crepe-color-outline, var(--milkj-border));
+    border-radius: 8px;
+    background: var(--crepe-color-surface, var(--milkj-bg));
+    color: var(--crepe-color-on-surface, var(--milkj-fg));
+    box-shadow: var(--crepe-shadow-2, 0 4px 16px rgba(0, 0, 0, .2));
+  }
+
+  .milkj-image-source-editor[hidden] {
+    display: none;
+  }
+
+  .milkj-image-source-editor__label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--crepe-color-on-surface-variant, currentColor);
+    font: 600 11px/1.3 system-ui, sans-serif;
+    text-transform: uppercase;
+  }
+
+  .milkj-image-source-editor__input {
+    min-width: 0;
+    flex: 1;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    border: 1px solid var(--crepe-color-outline, var(--milkj-border));
+    border-radius: 5px;
+    outline: none;
+    background: var(--crepe-color-inline-area, var(--milkj-bg));
+    color: var(--crepe-color-on-surface, var(--milkj-fg));
+    font: 12px/1.4 var(--crepe-font-code, monospace);
+    text-transform: none;
+  }
+
+  .milkj-image-source-editor__input:focus {
+    border-color: var(--crepe-color-primary, Highlight);
+    box-shadow: 0 0 0 1px var(--crepe-color-primary, Highlight);
+  }
+
+  .milkj-image-source-editor__input[aria-invalid="true"] {
+    border-color: var(--crepe-color-error, #d1242f);
+  }
+
+  .milkj-image-source-editor__error {
+    margin-top: 5px;
+    color: var(--crepe-color-error, #d1242f);
+    font: 11px/1.3 system-ui, sans-serif;
   }
 
   :root {

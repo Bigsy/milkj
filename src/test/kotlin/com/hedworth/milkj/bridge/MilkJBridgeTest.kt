@@ -395,6 +395,15 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertTrue(json.contains("\"proofingDialect\":\"AUTO\""))
     }
 
+    fun testFrontendConfigJsonCarriesEscapedLocalImageEndpoint() {
+        val json = MilkJBridge.frontendConfigJson(
+            MilkJSettings.State(),
+            readonly = false,
+            localImageBaseUrl = "http://milkj.localhost/local-image/a token/",
+        )
+        assertTrue(json.contains("\"localImageBaseUrl\":\"http://milkj.localhost/local-image/a token/\""))
+    }
+
     fun testFrontendConfigJsonEscapesCustomDictionary() {
         val state = MilkJSettings.State().apply {
             customDictionary = mutableListOf("C++", "MilkJ's", "quote\"slash\\", "Ångström")
