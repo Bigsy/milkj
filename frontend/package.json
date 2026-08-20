@@ -19,6 +19,7 @@
     "@milkdown/kit": "7.21.2",
     "@milkdown/theme-nord": "7.21.2",
     "diff-match-patch": "^1.0.5",
+    "dompurify": "^3.4.14",
     "harper.js": "2.7.0",
     "mermaid": "11.16.0",
     "prosemirror-search": "^1.1.1"

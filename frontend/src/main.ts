@@ -13,6 +13,7 @@ import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
+import { createHtmlPreviewPlugin } from "./html-preview";
 import {
   createImageSourceEditorPlugin,
   parseImageSource,
@@ -189,6 +190,9 @@ async function createEditor() {
     })));
     crepe.editor.use($prose(() => proofingController.createPlugin()));
     crepe.editor.use($prose(() => createProjectLinksPlugin()));
+    crepe.editor.use($prose(() => createHtmlPreviewPlugin({
+      resolveImageUrl: (src) => resolveImageDomUrl(src, currentLocalImageBaseUrl),
+    })));
     crepe.editor.use($prose(() => createImageSourceEditorPlugin({
       codec: {
         serialize: (node, schema) => serializeImageNode(
@@ -517,6 +521,57 @@ style.textContent = `
   .milkdown a[href],
   .milkdown .milkj-project-link {
     cursor: pointer;
+  }
+
+  /* Milkdown stores raw HTML as an inline atom so it can round-trip it exactly. The custom node
+     view renders a sanitized copy while leaving that atom (and therefore the Markdown) untouched. */
+  .milkdown .milkj-html-preview {
+    display: block;
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: normal;
+  }
+
+  .milkdown p:has(> .milkj-html-preview:only-child) {
+    margin: 0;
+  }
+
+  .milkdown .milkj-html-preview table {
+    display: table;
+    width: 100%;
+    max-width: 100%;
+    margin: 16px 0;
+    border-spacing: 0;
+    border-collapse: collapse;
+    overflow: auto;
+  }
+
+  .milkdown .milkj-html-preview th,
+  .milkdown .milkj-html-preview td {
+    padding: 6px 13px;
+    border: 1px solid var(--crepe-color-outline, var(--milkj-border));
+    vertical-align: middle;
+  }
+
+  .milkdown .milkj-html-preview tr:nth-child(2n) {
+    background: var(--crepe-color-surface, transparent);
+  }
+
+  .milkdown .milkj-html-preview img {
+    display: inline-block;
+    max-width: 100%;
+    height: auto;
+  }
+
+  .milkdown .milkj-html-preview td > img:only-child {
+    display: block;
+    margin: 0 auto;
+  }
+
+  .milkdown .milkj-html-preview.ProseMirror-selectednode {
+    outline: 2px solid var(--crepe-color-primary);
+    outline-offset: 2px;
   }
 
   /* Crepe hides the native caret unconditionally and only colors its virtual caret while the

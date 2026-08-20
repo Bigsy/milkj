@@ -33,6 +33,13 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.16</b>
+    <ul>
+        <li>Raw HTML in Markdown now renders as a sanitized preview, including centered headings, details blocks, tables, and local or remote images, while preserving the original HTML source.</li>
+        <li>Click a rendered Markdown image to edit its complete Markdown source directly, for both project-local and remote images.</li>
+        <li>Unsafe HTML such as scripts, event handlers, inline styles, embedded frames, and dangerous URLs is removed from the preview.</li>
+    </ul>
+    <br/>
     <b>0.1.15</b>
     <ul>
         <li>Rich-text edits now merge by aligning parsed Markdown blocks against the editor's content, not just by diffing text: an edit inside one block (a table, a list item, a blockquote) keeps every other block byte-exact, even when an unrelated IDE change landed while the edit was in flight.</li>
