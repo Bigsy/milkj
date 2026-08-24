@@ -392,7 +392,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         val json = MilkJBridge.frontendConfigJson(MilkJSettings.State(), readonly = true)
         assertTrue(json.contains("\"readonly\":true"))
         assertTrue(json.contains("\"proofingEnabled\":true"))
-        assertTrue(json.contains("\"proofingDialect\":\"AUTO\""))
+        assertTrue(json.contains("\"proofingDialect\":\"BRITISH\""))
     }
 
     fun testFrontendConfigJsonCarriesEscapedLocalImageEndpoint() {

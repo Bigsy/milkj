@@ -33,6 +33,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.17</b>
+    <ul>
+        <li>Harper proofreading now defaults to British English instead of following your system language (which fell back to American English on most systems). You can still pick another dialect under Settings | Tools | MilkJ.</li>
+    </ul>
+    <br/>
     <b>0.1.16</b>
     <ul>
         <li>Raw HTML in Markdown now renders as a sanitized preview, including centered headings, details blocks, tables, and local or remote images, while preserving the original HTML source.</li>

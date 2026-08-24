@@ -10,20 +10,20 @@ Use it for README files, documentation, project notes, and AI-generated plans wi
 
 1. Open `Settings` -> `Plugins` -> `Marketplace` in your JetBrains IDE.
 2. Search for **MilkJ Markdown**.
-3. Select **Install**, restart the IDE if prompted, and open a Markdown file.
+3. Select **Install**, restart the IDE if prompted, and open a Markdown file
 4. Select the **MilkJ** editor tab.
 
 You can also install it directly from the [JetBrains Marketplace listing](https://plugins.jetbrains.com/plugin/32518-milkj).
 
 ## Features
 
-- WYSIWYG rich-text Markdown editing powered by Milkdown and Crepe.
+- WYSIWYG rich-text Markdown editing powered by Milkdown and Crepe. sdsds
 - Native JetBrains editor tab integration for `.md` and `.markdown` files.
 - Two-way sync with the IntelliJ document model, so edits flow between MilkJ and the built-in Markdown editor.
 - Source-preserving round-trips apply only rich-text changes back to the original Markdown, protecting frontmatter, raw HTML, custom extensions, and existing formatting.
 - Project-aware Markdown links and bare paths open in the JetBrains editor with Ctrl-click (Windows/Linux) or Cmd-click (macOS), including one-based references such as `src/main/kotlin/example/Bridge.kt#L151`.
 - Relative links resolve from the Markdown file and then the project root; a leading `/` is project-root-relative inside MilkJ, for example `[Frontend](/frontend/src/main.ts#L127-L190)`.
-- Harper spell checking with correction suggestions, an application-wide custom dictionary, and importable Weirpacks for custom grammar rules.
+- <br />
 - Mermaid diagram previews for `mermaid` fenced code blocks.
 - Mermaid language support in the code-block language picker.
 - Math rendering via Crepe's built-in LaTeX support.

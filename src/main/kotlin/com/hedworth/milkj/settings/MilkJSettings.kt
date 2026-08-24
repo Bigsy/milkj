@@ -57,7 +57,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var placeholderText: String = "Start writing..."
         var showShortcutsTab: Boolean = true
         var spellcheckEnabled: Boolean = true
-        var proofingDialect: ProofingDialect = ProofingDialect.AUTO
+        var proofingDialect: ProofingDialect = ProofingDialect.BRITISH
         var customDictionary: MutableList<String> = mutableListOf()
         var weirpacks: MutableList<WeirpackSetting> = mutableListOf()
 
