@@ -21,6 +21,7 @@ import {
 } from "./image-source-editor";
 import { resolveImageDomUrl } from "./image-urls";
 import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
+import { installOutline } from "./outline";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
@@ -131,6 +132,19 @@ const disposeProjectLinks = installProjectLinks({
   },
 });
 
+const outline = installOutline({
+  getView: () => {
+    if (!crepe || creatingEditor) {
+      return undefined;
+    }
+    try {
+      return crepe.editor.ctx.get(editorViewCtx);
+    } catch {
+      return undefined;
+    }
+  },
+});
+
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
@@ -222,6 +236,7 @@ async function createEditor() {
           window.setTimeout(() => restoreSourceAfterUnsafeEdit(result.sourceMarkdown), 0);
         }
         findBar.refresh();
+        outline.refresh();
       });
     });
     // Content the IDE pushed while the editor was being (re)built.
@@ -235,6 +250,7 @@ async function createEditor() {
     creatingEditor = false;
   }
   findBar.syncToView();
+  outline.refresh();
 }
 
 /**
