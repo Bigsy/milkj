@@ -33,6 +33,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.19</b>
+    <ul>
+        <li>Web links are now clickable: clicking an http, https, or mailto link opens it in your system's default browser instead of doing nothing.</li>
+    </ul>
+    <br/>
     <b>0.1.18</b>
     <ul>
         <li>Added a document outline: select the new button in the editor's top-left corner or press Ctrl/Cmd+Shift+O to open a heading rail beside the text. Select a heading to jump to it, and the current section highlights as you scroll.</li>
