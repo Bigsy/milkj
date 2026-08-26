@@ -19,6 +19,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.impl.LoadTextUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.vfs.StandardFileSystems
@@ -33,6 +34,8 @@ import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
 import org.jetbrains.annotations.TestOnly
+import java.net.URI
+import java.net.URISyntaxException
 import java.nio.file.Files
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -54,6 +57,7 @@ class MilkJBridge(
     private val file: VirtualFile,
     private val connection: MilkJBrowserConnection,
     navigator: FileLinkNavigator? = null,
+    private val openInBrowser: (String) -> Unit = { BrowserUtil.browse(it) },
     private val localImageBaseUrl: String? = null,
 ) : Disposable {
     private val fileLinkNavigator: FileLinkNavigator
@@ -213,26 +217,61 @@ class MilkJBridge(
                 message.startsWith(NAVIGATION_PREFIX) && pageReady -> {
                     handleNavigationPayload(message.removePrefix(NAVIGATION_PREFIX))
                 }
+                message.startsWith(EXTERNAL_URL_PREFIX) && pageReady -> {
+                    handleExternalUrlPayload(message.removePrefix(EXTERNAL_URL_PREFIX))
+                }
             }
         }
     }
 
     private fun handleNavigationPayload(payload: String) {
+        val target = decodeValidatedTarget(payload) ?: return
+        fileLinkNavigator.navigate(target)
+    }
+
+    /**
+     * Opens a web link from the page in the OS default browser. JCEF's embedded frame has no
+     * popup/navigation handling, so the page forwards clicks here instead of navigating itself.
+     */
+    private fun handleExternalUrlPayload(payload: String) {
+        val url = decodeValidatedTarget(payload) ?: return
+        val uri = try {
+            URI(url)
+        } catch (_: URISyntaxException) {
+            LOG.warn("Dropped invalid MilkJ external URL message: not a parsable URI")
+            return
+        }
+        // Allow-list: only schemes that are safe to hand to a browser. Everything else — most
+        // importantly javascript:, data:, and file: — must never leave the page as an open request.
+        val schemeAllowed = when (uri.scheme?.lowercase()) {
+            "http", "https" -> !uri.host.isNullOrBlank()
+            "mailto" -> uri.schemeSpecificPart.isNotBlank()
+            else -> false
+        }
+        if (!schemeAllowed) {
+            LOG.warn("Dropped unsupported MilkJ external URL message: scheme is not browser-safe")
+            return
+        }
+        openInBrowser(uri.toString())
+    }
+
+    /** Shared transport-level validation for the `navigate:*` message family; null means dropped. */
+    private fun decodeValidatedTarget(payload: String): String? {
         if (payload.length > MAX_NAVIGATION_PAYLOAD_CHARS || payload.any { it.code > 0x7f }) {
             LOG.warn("Dropped invalid MilkJ navigation message: encoded payload is oversized or non-ASCII")
-            return
+            return null
         }
         val target = try {
             strictPercentDecode(payload)
         } catch (_: IllegalArgumentException) {
             LOG.warn("Dropped invalid MilkJ navigation message: malformed percent encoding or UTF-8")
-            return
+            return null
         }
         if (target.isBlank() || target.length > MAX_NAVIGATION_TARGET_CHARS || target.hasIsoControlCharacters()) {
             LOG.warn("Dropped invalid MilkJ navigation message: decoded target is empty, oversized, or contains controls")
-            return
+            return null
         }
-        fileLinkNavigator.navigate(target)
+        return target
     }
 
     private fun notifyRoundTripFailure(encodedReason: String) {
@@ -476,6 +515,7 @@ class MilkJBridge(
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
         private const val NAVIGATION_PREFIX = "navigate:file:"
+        private const val EXTERNAL_URL_PREFIX = "navigate:url:"
         private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
         private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024

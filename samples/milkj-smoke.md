@@ -52,8 +52,8 @@ The following links exercise safe failure behavior. They should leave MilkJ open
 
 * [Valid file but line outside its range](../README.md#L99999)
 
-This web link should be suppressed on modifier-click without being sent to the IDE or navigating
-JCEF: [Milkdown website](https://milkdown.dev).
+This web link should open in the OS default browser on a plain click (and on modifier-click)
+without ever navigating the embedded JCEF view: [Milkdown website](https://milkdown.dev).
 
 ## Inline Formatting
 

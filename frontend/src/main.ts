@@ -130,6 +130,9 @@ const disposeProjectLinks = installProjectLinks({
   navigate: (href) => {
     window.milkjSendToIde?.(`navigate:file:${encodeURIComponent(href)}`);
   },
+  openExternal: (href) => {
+    window.milkjSendToIde?.(`navigate:url:${encodeURIComponent(href)}`);
+  },
 });
 
 const outline = installOutline({

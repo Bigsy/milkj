@@ -14,20 +14,65 @@ describe("project file links", () => {
   ])("sends a raw relative href for %s-click", (_name, modifier) => {
     document.body.innerHTML = '<a href="src/My%20File.kt#L12"><strong>open</strong></a>';
     const navigate = vi.fn();
-    const dispose = installProjectLinks({ navigate });
+    const openExternal = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal });
 
     const event = click(document.querySelector("strong")!, modifier);
 
     expect(navigate).toHaveBeenCalledOnce();
     expect(navigate).toHaveBeenCalledWith("src/My%20File.kt#L12");
+    expect(openExternal).not.toHaveBeenCalled();
     expect(event.defaultPrevented).toBe(true);
     dispose();
   });
 
-  it("does nothing for plain, non-primary, and outside clicks", () => {
+  it.each([
+    ["plain", {}],
+    ["Ctrl", { ctrlKey: true }],
+    ["Cmd", { metaKey: true }],
+  ])("%s-click opens web links externally", (_name, modifiers) => {
+    document.body.innerHTML = '<a href="https://example.com/docs?q=1#top"><strong>docs</strong></a>';
+    const navigate = vi.fn();
+    const openExternal = vi.fn();
+    const bubbled = vi.fn();
+    document.body.addEventListener("click", bubbled);
+    const dispose = installProjectLinks({ navigate, openExternal });
+
+    const event = click(document.querySelector("strong")!, modifiers);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(bubbled).not.toHaveBeenCalled();
+    expect(openExternal).toHaveBeenCalledOnce();
+    expect(openExternal).toHaveBeenCalledWith("https://example.com/docs?q=1#top");
+    expect(navigate).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each([
+    "mailto:user@example.com",
+    "HTTP://EXAMPLE.COM/PATH",
+  ])("sends %s to the external browser handler too", (href) => {
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", href);
+    anchor.textContent = "open";
+    document.body.append(anchor);
+    const navigate = vi.fn();
+    const openExternal = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal });
+
+    const event = click(anchor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(openExternal).toHaveBeenCalledWith(href);
+    expect(navigate).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("does nothing for plain, non-primary, and outside clicks on non-web links", () => {
     document.body.innerHTML = '<a href="src/Foo.kt">open</a><span>outside</span>';
     const navigate = vi.fn();
-    const dispose = installProjectLinks({ navigate });
+    const openExternal = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal });
     const anchor = document.querySelector("a")!;
     // Keep jsdom from attempting its unimplemented page navigation after these intentionally
     // unhandled clicks; this listener is unrelated to the project-link handler under test.
@@ -39,13 +84,11 @@ describe("project file links", () => {
     click(document.querySelector("span")!, { ctrlKey: true });
 
     expect(navigate).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
     dispose();
   });
 
   it.each([
-    "http://example.com/file.kt",
-    "https://example.com/file.kt",
-    "mailto:test@example.com",
     "javascript:alert(1)",
     "data:text/plain,test",
     "#installation",
@@ -58,15 +101,17 @@ describe("project file links", () => {
     anchor.textContent = "open";
     document.body.append(anchor);
     const navigate = vi.fn();
+    const openExternal = vi.fn();
     const bubbled = vi.fn();
     document.body.addEventListener("click", bubbled);
-    const dispose = installProjectLinks({ navigate });
+    const dispose = installProjectLinks({ navigate, openExternal });
 
     const event = click(anchor, { ctrlKey: true });
 
     expect(event.defaultPrevented).toBe(true);
     expect(bubbled).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
     dispose();
   });
 
@@ -77,19 +122,22 @@ describe("project file links", () => {
       anchor.setAttribute("href", href);
       document.body.append(anchor);
       const navigate = vi.fn();
-      const dispose = installProjectLinks({ navigate });
+      const openExternal = vi.fn();
+      const dispose = installProjectLinks({ navigate, openExternal });
 
       const event = click(anchor, { metaKey: true });
 
       expect(event.defaultPrevented).toBe(true);
       expect(navigate).toHaveBeenCalledWith(href);
+      expect(openExternal).not.toHaveBeenCalled();
       dispose();
     },
   );
 
   it("survives DOM replacement and disposal removes the listener", () => {
     const navigate = vi.fn();
-    const dispose = installProjectLinks({ navigate });
+    const openExternal = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal });
     document.body.innerHTML = '<div class="milkdown"><a href="first.kt">first</a></div>';
     click(document.querySelector("a")!, { ctrlKey: true });
     document.body.innerHTML = '<div class="milkdown"><a href="second.kt">second</a></div>';
@@ -141,7 +189,8 @@ describe("project file links", () => {
     document.body.innerHTML =
       '<p>Open <code><span data-milkj-project-href="../src/Foo.kt#L4">../src/Foo.kt#L4</span></code></p>';
     const navigate = vi.fn();
-    const dispose = installProjectLinks({ navigate });
+    const openExternal = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal });
 
     const event = click(document.querySelector("span")!, { ctrlKey: true });
 

@@ -61,6 +61,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
     private lateinit var document: Document
     private lateinit var connection: FakeBrowserConnection
     private lateinit var navigator: FakeFileLinkNavigator
+    private val openedUrls = mutableListOf<String>()
     private lateinit var bridge: MilkJBridge
 
     private fun setUpBridge(initialText: String) {
@@ -69,7 +70,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         FileDocumentManager.getInstance().saveAllDocuments()
         connection = FakeBrowserConnection()
         navigator = FakeFileLinkNavigator()
-        bridge = MilkJBridge(project, file, connection, navigator)
+        bridge = MilkJBridge(project, file, connection, navigator, openInBrowser = { openedUrls += it })
         Disposer.register(testRootDisposable, bridge)
         bridge.install()
     }
@@ -215,6 +216,45 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertEquals(documentText, document.text)
         assertEquals(scriptsBefore, connection.executedScripts)
         assertFalse(isDocumentUnsaved())
+    }
+
+    fun testExternalUrlOpensSystemBrowserAfterReady() {
+        setUpBridge("original\n")
+
+        sendFromPage("navigate:url:https%3A%2F%2Fexample.com%2Fdocs%3Fq%3Da%2Bb%23top")
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        assertEmpty("external URLs must wait for page-ready like other page messages", openedUrls)
+
+        sendFromPage("ready")
+        sendFromPage("navigate:url:https%3A%2F%2Fexample.com%2Fdocs%3Fq%3Da%2Bb%23top")
+        sendFromPage("navigate:url:mailto%3Auser%40example.com")
+
+        assertEquals(
+            listOf("https://example.com/docs?q=a+b#top", "mailto:user@example.com"),
+            openedUrls,
+        )
+    }
+
+    fun testInvalidAndUnsafeExternalUrlsAreDropped() {
+        setUpBridge("original\n")
+        sendFromPage("ready")
+
+        listOf(
+            "navigate:url:",
+            "navigate:url:%",
+            "navigate:url:%00https%3A%2F%2Fexample.com",
+            "navigate:url:${"a".repeat(8 * 1024 + 1)}",
+            "navigate:url:javascript%3Aalert(1)",
+            "navigate:url:data%3Atext%2Fhtml%2Chello",
+            "navigate:url:vbscript%3Amsgbox(1)",
+            "navigate:url:file%3A%2F%2F%2Fetc%2Fpasswd",
+            "navigate:url:http%3Aexample.com",
+            "navigate:url:mailto%3A",
+        ).forEach(::sendFromPage)
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+
+        assertEmpty(openedUrls)
+        assertEquals("original\n", document.text)
     }
 
     fun testNativeEditDuringPendingPageWriteWins() {

@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
 
 export interface ProjectLinksHost {
   navigate(href: string): void;
+  openExternal(href: string): void;
 }
 
 export interface BareProjectFileLink {
@@ -31,7 +32,7 @@ export function installProjectLinks(
   page: Document = document,
 ): () => void {
   const onClick = (event: MouseEvent) => {
-    if (event.button !== 0 || (!event.ctrlKey && !event.metaKey)) {
+    if (event.button !== 0) {
       return;
     }
 
@@ -45,14 +46,33 @@ export function installProjectLinks(
       return;
     }
 
+    const href = link.matches("a[href]")
+      ? link.getAttribute("href")
+      : link.getAttribute("data-milkj-project-href");
+    if (href === null) {
+      return;
+    }
+
+    // Web links open in the OS default browser on any left click (including from Crepe's link
+    // tooltip). They must never reach JCEF itself: the embedded frame has no popup handling, so
+    // such navigation would silently do nothing.
+    if (isExternalUrlCandidate(href)) {
+      event.preventDefault();
+      event.stopPropagation();
+      host.openExternal(href);
+      return;
+    }
+
+    // Plain clicks on document content keep placing the caret; only modifier-clicks navigate.
+    if (!event.ctrlKey && !event.metaKey) {
+      return;
+    }
+
     // No modifier-clicked anchor may reach JCEF's navigation or popup handling.
     event.preventDefault();
     event.stopPropagation();
 
-    const href = link.matches("a[href]")
-      ? link.getAttribute("href")
-      : link.getAttribute("data-milkj-project-href");
-    if (href !== null && isProjectFileCandidate(href)) {
+    if (isProjectFileCandidate(href)) {
       host.navigate(href);
     }
   };
@@ -144,4 +164,11 @@ export function isProjectFileCandidate(href: string): boolean {
     return scheme.toLowerCase() === "file:" && /^file:\/\//i.test(href);
   }
   return true;
+}
+
+const EXTERNAL_URL = /^(?:https?:\/\/|mailto:)/i;
+
+/** Web links are handed to the IDE, which opens them in the OS default browser. */
+export function isExternalUrlCandidate(href: string): boolean {
+  return EXTERNAL_URL.test(href);
 }
