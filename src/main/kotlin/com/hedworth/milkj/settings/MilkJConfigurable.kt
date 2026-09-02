@@ -1,30 +1,15 @@
 package com.hedworth.milkj.settings
 
-import com.intellij.openapi.fileChooser.FileChooser
-import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
-import com.intellij.ui.HyperlinkLabel
-import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
-import com.intellij.ui.table.JBTable
-import java.awt.BorderLayout
-import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import java.awt.event.ActionListener
 import java.awt.event.ItemListener
-import java.util.Base64
-import javax.swing.JButton
-import javax.swing.ComboBoxModel
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
-import javax.swing.ListSelectionModel
-import javax.swing.table.AbstractTableModel
-import javax.swing.event.ListSelectionListener
 
 class MilkJConfigurable : Configurable {
     private val settings: MilkJSettings = MilkJSettings.getInstance()
@@ -41,14 +26,7 @@ class MilkJConfigurable : Configurable {
     private var spellcheckListener: ItemListener? = null
     private var dictionaryEditor: DictionaryEditor? = null
     private var dictionaryBaseline: List<String> = emptyList()
-    private var weirpackModel: WeirpackTableModel? = null
-    private var weirpackTable: JBTable? = null
-    private var weirpackImportButton: JButton? = null
-    private var weirpackRemoveButton: JButton? = null
-    private var weirpackStatusLabel: JBLabel? = null
-    private var weirpackImportListener: ActionListener? = null
-    private var weirpackRemoveListener: ActionListener? = null
-    private var weirpackSelectionListener: ListSelectionListener? = null
+    private var weirpackEditor: WeirpackEditor? = null
     private var weirpackBaseline: List<WeirpackSnapshot> = emptyList()
 
     override fun getDisplayName(): String = "MilkJ"
@@ -73,7 +51,7 @@ class MilkJConfigurable : Configurable {
         }.also { spellcheckCheckBox!!.addItemListener(it) }
 
         val dictionaryPanel = DictionaryEditor().also { dictionaryEditor = it }
-        val weirpackPanel = createWeirpackPanel()
+        val weirpackPanel = WeirpackEditor().also { weirpackEditor = it }
 
         createdPanel.addRow(0, "Theme mode:", themeCombo!!)
         createdPanel.addRow(1, "Editor theme:", editorThemeCombo!!)
@@ -102,7 +80,7 @@ class MilkJConfigurable : Configurable {
             spellcheckCheckBox?.isSelected != state.spellcheckEnabled ||
             proofingDialectCombo?.selectedItem != state.proofingDialect ||
             dictionaryEditor?.words.orEmpty() != dictionaryBaseline ||
-            weirpackSnapshots() != weirpackBaseline
+            weirpackEditor?.snapshots().orEmpty() != weirpackBaseline
     }
 
     override fun apply() {
@@ -128,13 +106,13 @@ class MilkJConfigurable : Configurable {
                 it.proofingDialect =
                     proofingDialectCombo?.selectedItem as MilkJSettings.ProofingDialect
                 it.customDictionary = mergedDictionary
-                it.weirpacks = weirpacks()
+                it.weirpacks = weirpackEditor?.packs() ?: mutableListOf()
             },
         )
         dictionaryEditor?.replaceWords(mergedDictionary)
         dictionaryBaseline = mergedDictionary.toList()
-        replaceWeirpacks(settings.state.weirpacks)
-        weirpackBaseline = weirpackSnapshots()
+        weirpackEditor?.replacePacks(settings.state.weirpacks)
+        weirpackBaseline = weirpackEditor?.snapshots().orEmpty()
     }
 
     override fun reset() {
@@ -150,16 +128,11 @@ class MilkJConfigurable : Configurable {
         proofingDialectCombo?.selectedItem = state.proofingDialect
         proofingDialectCombo?.isEnabled = state.spellcheckEnabled
         dictionaryBaseline = dictionaryEditor?.reset(state.customDictionary).orEmpty()
-        replaceWeirpacks(state.weirpacks)
-        weirpackBaseline = weirpackSnapshots()
-        showWeirpackStatus(null, error = false)
+        weirpackBaseline = weirpackEditor?.reset(state.weirpacks).orEmpty()
     }
 
     override fun disposeUIResources() {
         spellcheckListener?.let { spellcheckCheckBox?.removeItemListener(it) }
-        weirpackImportListener?.let { weirpackImportButton?.removeActionListener(it) }
-        weirpackRemoveListener?.let { weirpackRemoveButton?.removeActionListener(it) }
-        weirpackSelectionListener?.let { weirpackTable?.selectionModel?.removeListSelectionListener(it) }
         panel = null
         themeCombo = null
         editorThemeCombo = null
@@ -173,162 +146,9 @@ class MilkJConfigurable : Configurable {
         spellcheckListener = null
         dictionaryEditor = null
         dictionaryBaseline = emptyList()
-        weirpackModel = null
-        weirpackTable = null
-        weirpackImportButton = null
-        weirpackRemoveButton = null
-        weirpackStatusLabel = null
-        weirpackImportListener = null
-        weirpackRemoveListener = null
-        weirpackSelectionListener = null
+        weirpackEditor = null
         weirpackBaseline = emptyList()
     }
-
-    private fun createWeirpackPanel(): JPanel {
-        val model = WeirpackTableModel().also { weirpackModel = it }
-        val table = JBTable(model).also {
-            weirpackTable = it
-            it.selectionModel.selectionMode = ListSelectionModel.SINGLE_SELECTION
-            it.setShowGrid(false)
-            it.emptyText.text = "No Weirpacks imported"
-            it.columnModel.getColumn(0).apply {
-                minWidth = 64
-                maxWidth = 64
-            }
-            it.columnModel.getColumn(2).apply {
-                minWidth = 70
-                maxWidth = 70
-            }
-        }
-        val importButton = JButton("Import…").also { weirpackImportButton = it }
-        val removeButton = JButton("Remove Selected").also {
-            weirpackRemoveButton = it
-            it.isEnabled = false
-        }
-        val status = JBLabel().also { weirpackStatusLabel = it }
-
-        weirpackImportListener = ActionListener { importWeirpack() }
-            .also(importButton::addActionListener)
-        weirpackRemoveListener = ActionListener {
-            val selected = table.selectedRow
-            if (selected >= 0) {
-                model.removePack(table.convertRowIndexToModel(selected))
-                updateWeirpackButtons()
-                showWeirpackStatus(null, error = false)
-            }
-        }.also(removeButton::addActionListener)
-        weirpackSelectionListener = ListSelectionListener { updateWeirpackButtons() }
-            .also(table.selectionModel::addListSelectionListener)
-
-        val buttons = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)).apply {
-            add(importButton)
-            add(javax.swing.Box.createHorizontalStrut(6))
-            add(removeButton)
-        }
-        val help = JPanel(BorderLayout(0, 2)).apply {
-            add(
-                JBLabel("Import ZIP-based .weirpack archives containing custom Harper rules or dictionaries."),
-                BorderLayout.NORTH,
-            )
-            add(HyperlinkLabel("Create your own with Weirsmith").apply {
-                setHyperlinkTarget(WEIRSMITH_URL)
-            }, BorderLayout.WEST)
-        }
-        return JPanel(BorderLayout(0, 4)).apply {
-            add(JBScrollPane(table).apply {
-                preferredSize = Dimension(360, 90)
-            }, BorderLayout.CENTER)
-            add(JPanel(BorderLayout(0, 4)).apply {
-                add(buttons, BorderLayout.NORTH)
-                add(help, BorderLayout.CENTER)
-                add(status, BorderLayout.SOUTH)
-            }, BorderLayout.SOUTH)
-        }
-    }
-
-    private fun importWeirpack() {
-        panel ?: return
-        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
-            .withTitle("Import Harper Weirpack")
-            .withDescription("Choose a .weirpack archive containing custom Weir rules")
-            .withFileFilter { file ->
-                file.isDirectory || file.extension.equals("weirpack", ignoreCase = true)
-            }
-        val file = FileChooser.chooseFile(descriptor, null, null) ?: return
-        if (file.length > MAX_WEIRPACK_FILE_BYTES) {
-            showWeirpackStatus("Weirpacks must be smaller than 10 MB.", error = true)
-            return
-        }
-
-        val bytes = try {
-            file.contentsToByteArray()
-        } catch (exception: Exception) {
-            showWeirpackStatus(
-                "Could not read ${file.name}: ${exception.message ?: "unknown error"}.",
-                error = true,
-            )
-            return
-        }
-        if (bytes.size > MAX_WEIRPACK_FILE_BYTES) {
-            showWeirpackStatus("Weirpacks must be smaller than 10 MB.", error = true)
-            return
-        }
-        val validationError = validateWeirpack(bytes)
-        if (validationError != null) {
-            showWeirpackStatus(validationError, error = true)
-            return
-        }
-
-        val name = uniqueWeirpackName(file.nameWithoutExtension.ifBlank { file.name })
-        weirpackModel?.addPack(
-            WeirpackSetting().also {
-                it.name = name
-                it.data = Base64.getEncoder().encodeToString(bytes)
-            },
-        )
-        val lastRow = (weirpackModel?.rowCount ?: 0) - 1
-        if (lastRow >= 0) {
-            weirpackTable?.selectionModel?.setSelectionInterval(lastRow, lastRow)
-        }
-        showWeirpackStatus(
-            "Imported “$name” (${formatByteSize(bytes.size)}).",
-            error = false,
-        )
-    }
-
-    private fun uniqueWeirpackName(baseName: String): String {
-        val names = weirpacks().mapTo(mutableSetOf(), WeirpackSetting::name)
-        if (baseName !in names) return baseName
-        var suffix = 2
-        while ("$baseName ($suffix)" in names) suffix++
-        return "$baseName ($suffix)"
-    }
-
-    private fun weirpacks(): MutableList<WeirpackSetting> =
-        normalizeWeirpacks(weirpackModel?.packs.orEmpty())
-
-    private fun replaceWeirpacks(packs: Iterable<WeirpackSetting>) {
-        weirpackModel?.replacePacks(normalizeWeirpacks(packs))
-        updateWeirpackButtons()
-    }
-
-    private fun weirpackSnapshots(): List<WeirpackSnapshot> =
-        weirpacks().map { WeirpackSnapshot(it.name, it.enabled, it.data) }
-
-    private fun updateWeirpackButtons() {
-        weirpackRemoveButton?.isEnabled = weirpackTable?.selectedRow?.let { it >= 0 } == true
-    }
-
-    private fun showWeirpackStatus(message: String?, error: Boolean) {
-        weirpackStatusLabel?.apply {
-            text = message.orEmpty()
-            foreground = if (error) JBColor.RED else JBColor.foreground()
-            isVisible = message != null
-        }
-    }
-
-    private fun formatByteSize(bytes: Int): String =
-        if (bytes < 1024) "$bytes B" else String.format("%.1f KB", bytes / 1024.0)
 
     private fun JPanel.addRow(row: Int, label: String, component: JComponent) {
         val labelConstraints = GridBagConstraints().apply {
@@ -348,77 +168,4 @@ class MilkJConfigurable : Configurable {
         }
         add(component, fieldConstraints)
     }
-
-    private companion object {
-        const val MAX_WEIRPACK_FILE_BYTES = 10L * 1024L * 1024L
-        const val WEIRSMITH_URL = "https://weirsmith.bigsy.uk"
-    }
-}
-
-private data class WeirpackSnapshot(
-    val name: String,
-    val enabled: Boolean,
-    val data: String,
-)
-
-private class WeirpackTableModel : AbstractTableModel() {
-    val packs: MutableList<WeirpackSetting> = mutableListOf()
-
-    override fun getRowCount(): Int = packs.size
-
-    override fun getColumnCount(): Int = 3
-
-    override fun getColumnName(column: Int): String =
-        when (column) {
-            0 -> "Enabled"
-            1 -> "Weirpack"
-            else -> "Size"
-        }
-
-    override fun getColumnClass(columnIndex: Int): Class<*> =
-        if (columnIndex == 0) java.lang.Boolean::class.java else super.getColumnClass(columnIndex)
-
-    override fun isCellEditable(rowIndex: Int, columnIndex: Int): Boolean = columnIndex == 0
-
-    override fun getValueAt(rowIndex: Int, columnIndex: Int): Any {
-        val pack = packs[rowIndex]
-        return when (columnIndex) {
-            0 -> pack.enabled
-            1 -> pack.name
-            else -> decodedSize(pack.data)
-        }
-    }
-
-    override fun setValueAt(value: Any?, rowIndex: Int, columnIndex: Int) {
-        if (columnIndex == 0 && value is Boolean) {
-            packs[rowIndex].enabled = value
-            fireTableCellUpdated(rowIndex, columnIndex)
-        }
-    }
-
-    fun addPack(pack: WeirpackSetting) {
-        val index = packs.size
-        packs += pack.copy()
-        fireTableRowsInserted(index, index)
-    }
-
-    fun removePack(index: Int) {
-        packs.removeAt(index)
-        fireTableRowsDeleted(index, index)
-    }
-
-    fun replacePacks(replacement: Iterable<WeirpackSetting>) {
-        packs.clear()
-        packs += replacement.map(WeirpackSetting::copy)
-        fireTableDataChanged()
-    }
-
-    private fun decodedSize(data: String): String =
-        runCatching { Base64.getDecoder().decode(data).size }
-            .fold(
-                onSuccess = { bytes ->
-                    if (bytes < 1024) "$bytes B" else String.format("%.1f KB", bytes / 1024.0)
-                },
-                onFailure = { "Invalid" },
-            )
 }
