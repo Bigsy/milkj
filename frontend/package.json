@@ -1,7 +1,7 @@
 {
   "name": "@milkj/frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.16",
   "packageManager": "pnpm@11.9.0",
   "description": "Milkdown WYSIWYG editor bundle embedded in the MilkJ IntelliJ plugin via JCEF.",
   "type": "module",
