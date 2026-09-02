@@ -91,3 +91,8 @@ MilkJ is designed to live alongside the built-in JetBrains Markdown editor rathe
 ## License
 
 MilkJ is available under the MIT License.
+
+The plugin ships a bundled copy of its frontend dependencies. `THIRD_PARTY_NOTICES.md` covers the
+notable ones, and `third-party/BUNDLED-LICENSES.md` inside the plugin artifact lists every bundled
+npm package with its version and license text. Regenerate that list with `make licenses` after
+changing frontend dependencies.
