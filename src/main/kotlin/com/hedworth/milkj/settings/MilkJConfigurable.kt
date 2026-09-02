@@ -3,12 +3,10 @@ package com.hedworth.milkj.settings
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.options.Configurable
-import com.intellij.openapi.ui.Messages
 import com.intellij.ui.HyperlinkLabel
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
@@ -19,7 +17,6 @@ import java.awt.GridBagLayout
 import java.awt.event.ActionListener
 import java.awt.event.ItemListener
 import java.util.Base64
-import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.ComboBoxModel
 import javax.swing.JComboBox
@@ -42,17 +39,7 @@ class MilkJConfigurable : Configurable {
     private var spellcheckCheckBox: JBCheckBox? = null
     private var proofingDialectCombo: JComboBox<MilkJSettings.ProofingDialect>? = null
     private var spellcheckListener: ItemListener? = null
-    private var dictionaryModel: DefaultListModel<String>? = null
-    private var dictionaryList: JBList<String>? = null
-    private var dictionaryField: JBTextField? = null
-    private var dictionaryAddButton: JButton? = null
-    private var dictionaryRemoveButton: JButton? = null
-    private var dictionaryClearButton: JButton? = null
-    private var dictionaryValidationLabel: JBLabel? = null
-    private var dictionaryAddListener: ActionListener? = null
-    private var dictionaryRemoveListener: ActionListener? = null
-    private var dictionaryClearListener: ActionListener? = null
-    private var dictionarySelectionListener: ListSelectionListener? = null
+    private var dictionaryEditor: DictionaryEditor? = null
     private var dictionaryBaseline: List<String> = emptyList()
     private var weirpackModel: WeirpackTableModel? = null
     private var weirpackTable: JBTable? = null
@@ -85,7 +72,7 @@ class MilkJConfigurable : Configurable {
             proofingDialectCombo?.isEnabled = spellcheckCheckBox?.isSelected == true
         }.also { spellcheckCheckBox!!.addItemListener(it) }
 
-        val dictionaryPanel = createDictionaryPanel()
+        val dictionaryPanel = DictionaryEditor().also { dictionaryEditor = it }
         val weirpackPanel = createWeirpackPanel()
 
         createdPanel.addRow(0, "Theme mode:", themeCombo!!)
@@ -114,12 +101,12 @@ class MilkJConfigurable : Configurable {
             showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab ||
             spellcheckCheckBox?.isSelected != state.spellcheckEnabled ||
             proofingDialectCombo?.selectedItem != state.proofingDialect ||
-            dictionaryWords() != dictionaryBaseline ||
+            dictionaryEditor?.words.orEmpty() != dictionaryBaseline ||
             weirpackSnapshots() != weirpackBaseline
     }
 
     override fun apply() {
-        val localWords = dictionaryWords()
+        val localWords = dictionaryEditor?.words.orEmpty()
         val additions = localWords.toSet() - dictionaryBaseline.toSet()
         val removals = dictionaryBaseline.toSet() - localWords.toSet()
         val mergedDictionary = normalizeDictionary(
@@ -144,7 +131,7 @@ class MilkJConfigurable : Configurable {
                 it.weirpacks = weirpacks()
             },
         )
-        replaceDictionaryWords(mergedDictionary)
+        dictionaryEditor?.replaceWords(mergedDictionary)
         dictionaryBaseline = mergedDictionary.toList()
         replaceWeirpacks(settings.state.weirpacks)
         weirpackBaseline = weirpackSnapshots()
@@ -162,10 +149,7 @@ class MilkJConfigurable : Configurable {
         spellcheckCheckBox?.isSelected = state.spellcheckEnabled
         proofingDialectCombo?.selectedItem = state.proofingDialect
         proofingDialectCombo?.isEnabled = state.spellcheckEnabled
-        dictionaryBaseline = normalizeDictionary(state.customDictionary).toList()
-        replaceDictionaryWords(dictionaryBaseline)
-        dictionaryField?.text = ""
-        showDictionaryValidation(null)
+        dictionaryBaseline = dictionaryEditor?.reset(state.customDictionary).orEmpty()
         replaceWeirpacks(state.weirpacks)
         weirpackBaseline = weirpackSnapshots()
         showWeirpackStatus(null, error = false)
@@ -173,13 +157,6 @@ class MilkJConfigurable : Configurable {
 
     override fun disposeUIResources() {
         spellcheckListener?.let { spellcheckCheckBox?.removeItemListener(it) }
-        dictionaryAddListener?.let { listener ->
-            dictionaryAddButton?.removeActionListener(listener)
-            dictionaryField?.removeActionListener(listener)
-        }
-        dictionaryRemoveListener?.let { dictionaryRemoveButton?.removeActionListener(it) }
-        dictionaryClearListener?.let { dictionaryClearButton?.removeActionListener(it) }
-        dictionarySelectionListener?.let { dictionaryList?.removeListSelectionListener(it) }
         weirpackImportListener?.let { weirpackImportButton?.removeActionListener(it) }
         weirpackRemoveListener?.let { weirpackRemoveButton?.removeActionListener(it) }
         weirpackSelectionListener?.let { weirpackTable?.selectionModel?.removeListSelectionListener(it) }
@@ -194,17 +171,7 @@ class MilkJConfigurable : Configurable {
         spellcheckCheckBox = null
         proofingDialectCombo = null
         spellcheckListener = null
-        dictionaryModel = null
-        dictionaryList = null
-        dictionaryField = null
-        dictionaryAddButton = null
-        dictionaryRemoveButton = null
-        dictionaryClearButton = null
-        dictionaryValidationLabel = null
-        dictionaryAddListener = null
-        dictionaryRemoveListener = null
-        dictionaryClearListener = null
-        dictionarySelectionListener = null
+        dictionaryEditor = null
         dictionaryBaseline = emptyList()
         weirpackModel = null
         weirpackTable = null
@@ -215,75 +182,6 @@ class MilkJConfigurable : Configurable {
         weirpackRemoveListener = null
         weirpackSelectionListener = null
         weirpackBaseline = emptyList()
-    }
-
-    private fun createDictionaryPanel(): JPanel {
-        val model = DefaultListModel<String>().also { dictionaryModel = it }
-        val list = JBList(model).also {
-            dictionaryList = it
-            it.selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
-            it.visibleRowCount = 5
-        }
-        val scrollPane = JBScrollPane(list).apply { preferredSize = Dimension(360, 110) }
-        val field = JBTextField().also { dictionaryField = it }
-        val addButton = JButton("Add").also { dictionaryAddButton = it }
-        val removeButton = JButton("Remove Selected").also {
-            dictionaryRemoveButton = it
-            it.isEnabled = false
-        }
-        val clearButton = JButton("Clear").also {
-            dictionaryClearButton = it
-            it.isEnabled = false
-        }
-        val validation = JBLabel().also {
-            dictionaryValidationLabel = it
-            it.foreground = JBColor.RED
-        }
-
-        dictionaryAddListener = ActionListener { addDictionaryWordFromField() }.also {
-            addButton.addActionListener(it)
-            field.addActionListener(it)
-        }
-        dictionaryRemoveListener = ActionListener {
-            list.selectedIndices.sortedDescending().forEach(model::remove)
-            updateDictionaryButtons()
-            showDictionaryValidation(null)
-        }.also(removeButton::addActionListener)
-        dictionaryClearListener = ActionListener {
-            val parent = panel
-            if (parent != null && !model.isEmpty && Messages.showYesNoDialog(
-                    parent,
-                    "Remove every word from the MilkJ custom dictionary?",
-                    "Clear Custom Dictionary",
-                    Messages.getQuestionIcon(),
-                ) == Messages.YES
-            ) {
-                model.clear()
-                updateDictionaryButtons()
-                showDictionaryValidation(null)
-            }
-        }.also(clearButton::addActionListener)
-        dictionarySelectionListener = ListSelectionListener { updateDictionaryButtons() }
-            .also(list::addListSelectionListener)
-
-        val inputPanel = JPanel(BorderLayout(6, 0)).apply {
-            add(field, BorderLayout.CENTER)
-            add(addButton, BorderLayout.EAST)
-        }
-        val buttons = JPanel().apply {
-            layout = java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0)
-            add(removeButton)
-            add(javax.swing.Box.createHorizontalStrut(6))
-            add(clearButton)
-        }
-        return JPanel(BorderLayout(0, 6)).apply {
-            add(scrollPane, BorderLayout.CENTER)
-            add(JPanel(BorderLayout(0, 4)).apply {
-                add(inputPanel, BorderLayout.NORTH)
-                add(buttons, BorderLayout.CENTER)
-                add(validation, BorderLayout.SOUTH)
-            }, BorderLayout.SOUTH)
-        }
     }
 
     private fun createWeirpackPanel(): JPanel {
@@ -431,49 +329,6 @@ class MilkJConfigurable : Configurable {
 
     private fun formatByteSize(bytes: Int): String =
         if (bytes < 1024) "$bytes B" else String.format("%.1f KB", bytes / 1024.0)
-
-    private fun addDictionaryWordFromField() {
-        val raw = dictionaryField?.text.orEmpty()
-        val word = raw.trim { it.isWhitespace() || it == '\uFEFF' }
-        val message = when {
-            word.isEmpty() -> "Enter a word."
-            word.length > MilkJSettings.MAX_DICTIONARY_WORD_LENGTH -> "Words must be 64 characters or fewer."
-            word.any { it.isWhitespace() || it == '\uFEFF' } -> "Dictionary words cannot contain whitespace."
-            !word.codePoints().anyMatch(Character::isLetterOrDigit) -> "Include at least one letter or number."
-            else -> null
-        }
-        if (message != null) {
-            showDictionaryValidation(message)
-            return
-        }
-        val words = normalizeDictionary(dictionaryWords() + word)
-        replaceDictionaryWords(words)
-        dictionaryList?.setSelectedValue(word, true)
-        dictionaryField?.text = ""
-        showDictionaryValidation(null)
-    }
-
-    private fun dictionaryWords(): List<String> {
-        val model = dictionaryModel ?: return emptyList()
-        return (0 until model.size()).map(model::getElementAt)
-    }
-
-    private fun replaceDictionaryWords(words: Iterable<String>) {
-        val model = dictionaryModel ?: return
-        model.clear()
-        normalizeDictionary(words).forEach(model::addElement)
-        updateDictionaryButtons()
-    }
-
-    private fun updateDictionaryButtons() {
-        dictionaryRemoveButton?.isEnabled = dictionaryList?.isSelectionEmpty == false
-        dictionaryClearButton?.isEnabled = dictionaryModel?.isEmpty == false
-    }
-
-    private fun showDictionaryValidation(message: String?) {
-        dictionaryValidationLabel?.text = message.orEmpty()
-        dictionaryValidationLabel?.isVisible = message != null
-    }
 
     private fun JPanel.addRow(row: Int, label: String, component: JComponent) {
         val labelConstraints = GridBagConstraints().apply {
