@@ -1,5 +1,6 @@
 package com.hedworth.milkj.bridge
 
+import com.hedworth.milkj.editor.MilkJEditorState
 import com.hedworth.milkj.navigation.FileLinkNavigator
 import com.hedworth.milkj.settings.MilkJSettings
 import com.hedworth.milkj.settings.WeirpackSetting
@@ -283,6 +284,59 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         publisher.lookAndFeelChanged(LafManager.getInstance())
 
         assertEquals(1, connection.executedScripts.count { it.startsWith("window.milkjApplyConfig") })
+        assertFalse(isDocumentUnsaved())
+    }
+
+    // --- Caret and scroll position ---
+
+    private fun viewStatePushes(): List<String> =
+        connection.executedScripts.filter { it.startsWith("window.milkjSetViewState") }
+
+    fun testRestoredViewStateWaitsForTheContentAndIsPushedAfterIt() {
+        setUpBridge("# Doc\n")
+
+        bridge.restoreViewState(MilkJEditorState(anchor = 12, scrollTop = 340))
+        assertEmpty("nothing can be restored before the page exists", viewStatePushes())
+        assertEquals(
+            "the platform may ask for the state back before the page confirms it",
+            MilkJEditorState(12, 340),
+            bridge.viewState,
+        )
+
+        sendFromPage("ready")
+
+        assertEquals(listOf("window.milkjSetViewState?.(12, 340);"), viewStatePushes())
+        val markdownIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetMarkdown") }
+        val viewStateIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetViewState") }
+        assertTrue("the position refers to the content, so the content must land first", markdownIndex < viewStateIndex)
+        assertFalse(isDocumentUnsaved())
+    }
+
+    fun testViewStateRestoredAfterReadyIsPushedAtOnce() {
+        setUpBridge("# Doc\n")
+        sendFromPage("ready")
+        connection.executedScripts.clear()
+
+        bridge.restoreViewState(MilkJEditorState(anchor = 3, scrollTop = 0))
+
+        assertEquals(listOf("window.milkjSetViewState?.(3, 0);"), viewStatePushes())
+    }
+
+    fun testPageReportedViewStateIsCachedForGetState() {
+        setUpBridge("# Doc\n")
+        assertNull(bridge.viewState)
+
+        sendFromPage("viewstate:5:50")
+        assertNull("reports before ready belong to an editor without content", bridge.viewState)
+
+        sendFromPage("ready")
+        sendFromPage("viewstate:40:1200")
+        assertEquals(MilkJEditorState(40, 1200), bridge.viewState)
+
+        listOf("viewstate:", "viewstate:a:b", "viewstate:-1:0", "viewstate:1:-2", "viewstate:1:2:3", "viewstate:1.5:2")
+            .forEach(::sendFromPage)
+        assertEquals("malformed reports must not disturb the cached state", MilkJEditorState(40, 1200), bridge.viewState)
+        assertEquals("# Doc\n", document.text)
         assertFalse(isDocumentUnsaved())
     }
 

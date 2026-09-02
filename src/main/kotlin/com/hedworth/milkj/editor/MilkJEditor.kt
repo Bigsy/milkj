@@ -6,6 +6,7 @@ import com.hedworth.milkj.web.MilkJWebResources
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileEditor.FileEditor
 import com.intellij.openapi.fileEditor.FileEditorState
+import com.intellij.openapi.fileEditor.FileEditorStateLevel
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.UserDataHolderBase
@@ -39,6 +40,7 @@ class MilkJEditor(
 
     private val panel = JPanel(BorderLayout())
     private var browser: JBCefBrowser? = null
+    private var bridge: MilkJBridge? = null
 
     init {
         if (JcefSupport.isAvailable()) {
@@ -63,14 +65,15 @@ class MilkJEditor(
 
         val connection = JcefBrowserConnection(newBrowser)
         Disposer.register(this, connection)
-        val bridge = MilkJBridge(
+        val newBridge = MilkJBridge(
             project,
             file,
             connection,
             localImageBaseUrl = localImages?.baseUrl,
         )
-        Disposer.register(this, bridge)
-        bridge.install()
+        Disposer.register(this, newBridge)
+        bridge = newBridge
+        newBridge.install()
 
         newBrowser.loadURL(MilkJWebResources.indexUrl)
         panel.add(newBrowser.component, BorderLayout.CENTER)
@@ -86,7 +89,16 @@ class MilkJEditor(
 
     override fun getFile(): VirtualFile = file
 
-    override fun setState(state: FileEditorState) { /* TODO: restore caret/scroll if we model state */ }
+    // Caret and scroll position. The page owns them and reports changes to the bridge, which is why
+    // getState reads a cache rather than asking JCEF synchronously.
+    override fun getState(level: FileEditorStateLevel): FileEditorState =
+        bridge?.viewState ?: FileEditorState.INSTANCE
+
+    override fun setState(state: FileEditorState) {
+        if (state is MilkJEditorState) {
+            bridge?.restoreViewState(state)
+        }
+    }
 
     override fun isModified(): Boolean = false // backed by the shared Document; platform tracks mod/save
 

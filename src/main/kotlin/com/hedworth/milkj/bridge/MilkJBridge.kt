@@ -1,5 +1,6 @@
 package com.hedworth.milkj.bridge
 
+import com.hedworth.milkj.editor.MilkJEditorState
 import com.hedworth.milkj.images.ImageUploads
 import com.hedworth.milkj.navigation.FileLinkNavigator
 import com.hedworth.milkj.navigation.ProjectFileLinkNavigator
@@ -76,6 +77,14 @@ class MilkJBridge(
     private var trustedDiskFingerprint: DiskFingerprint? = null
     private var syncBlocked = false
     private var roundTripFailureNotified = false
+
+    /**
+     * The caret and scroll position the page last reported (debounced on its side), or the one the
+     * platform handed to [restoreViewState] until the page confirms. Null until either happens.
+     */
+    var viewState: MilkJEditorState? = null
+        private set
+    private var pendingViewState: MilkJEditorState? = null
 
     // The markdown most recently written into the Document on the page's behalf. Saving that write
     // fires a VFileContentChangeEvent like any external change would; pushing the identical text
@@ -175,6 +184,20 @@ class MilkJBridge(
         writeDebounce.cancelAllRequests()
     }
 
+    /**
+     * Restores a caret and scroll position on the page. The platform calls the editor's `setState`
+     * right after constructing it, long before the page is ready, so the state is parked until the
+     * content it refers to has been pushed; a later call (Back / Forward navigation) applies at once.
+     */
+    fun restoreViewState(state: MilkJEditorState) {
+        viewState = state
+        if (pageReady) {
+            pushViewState(state)
+        } else {
+            pendingViewState = state
+        }
+    }
+
     @TestOnly
     internal fun drainDebouncesForTest() {
         writeDebounce.drainRequestsInTest()
@@ -210,6 +233,13 @@ class MilkJBridge(
                     // lands, so a config-driven editor rebuild happens while it's still empty.
                     pushConfig()
                     pushMarkdown(currentMarkdown())
+                    pendingViewState?.let { state ->
+                        pendingViewState = null
+                        pushViewState(state)
+                    }
+                }
+                message.startsWith(VIEW_STATE_PREFIX) && pageReady -> {
+                    MilkJEditorState.parse(message.removePrefix(VIEW_STATE_PREFIX))?.let { viewState = it }
                 }
                 message.startsWith("markdown:") && pageReady -> {
                     parsePageMarkdown(message.removePrefix("markdown:"))?.let { pageEdit ->
@@ -443,6 +473,10 @@ class MilkJBridge(
         executeJavaScript("window.milkjSetMarkdown?.(${markdown.toJsonString()}, $pageRevision);")
     }
 
+    private fun pushViewState(state: MilkJEditorState) {
+        executeJavaScript("window.milkjSetViewState?.(${state.anchor}, ${state.scrollTop});")
+    }
+
     private fun pushConfig() {
         val configJson = frontendConfigJson(
             settings.state,
@@ -578,6 +612,7 @@ class MilkJBridge(
         private const val EXTERNAL_URL_PREFIX = "navigate:url:"
         private const val IMAGE_UPLOAD_PREFIX = "image:upload:"
         private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
+        private const val VIEW_STATE_PREFIX = "viewstate:"
         private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
         private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024

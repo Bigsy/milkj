@@ -27,6 +27,7 @@ import { installOutline } from "./outline";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
+import { type ViewState, ViewStateReporter, normalizeViewState } from "./view-state";
 import "@milkdown/crepe/theme/common/style.css";
 
 // MilkJ frontend entry point: Crepe (Milkdown's batteries-included WYSIWYG editor) plus MilkJ's own
@@ -41,8 +42,10 @@ import "@milkdown/crepe/theme/common/style.css";
 //   `navigate:file:<urlencoded href>`          Cmd/Ctrl-click on a project file link
 //   `navigate:url:<urlencoded href>`           Cmd/Ctrl-click on an http(s)/mailto link
 //   `image:upload:<id>:<name>:<mime>:<base64>` store a pasted/dropped image next to the file
-// IDE -> page: `window.milkjSetMarkdown(markdown, revision)`, `window.milkjApplyConfig(json)` and
-// `window.milkjImageUploaded(requestId, relativePathOrNull)`.
+//   `viewstate:<anchor>:<scrollTop>`           caret and scroll position, for the editor tab's state
+// IDE -> page: `window.milkjSetMarkdown(markdown, revision)`, `window.milkjApplyConfig(json)`,
+// `window.milkjImageUploaded(requestId, relativePathOrNull)` and
+// `window.milkjSetViewState(anchor, scrollTop)`.
 
 declare global {
   interface Window {
@@ -54,6 +57,9 @@ declare global {
     // Called by the IDE once a pasted/dropped image was written (path relative to the Markdown
     // file) or refused (null).
     milkjImageUploaded?: (requestId: string, relativePath: string | null) => void;
+    // Called by the IDE to put the caret and scroll position back after a reopened file's content
+    // has been pushed.
+    milkjSetViewState?: (anchor: number, scrollTop: number) => void;
     milkjBridgeInstalled?: () => void;
   }
 }
@@ -168,6 +174,18 @@ window.milkjImageUploaded = (requestId, relativePath) => {
 };
 const uploadImages = createImageUploader(imageUploads);
 
+// The IDE persists the caret and scroll position with the editor tab. Selection changes are
+// observed from the ProseMirror plugin below; the document itself is what scrolls.
+const viewStateReporter = new ViewStateReporter({
+  send: (message) => window.milkjSendToIde?.(message),
+});
+let pendingViewState: ViewState | undefined;
+window.milkjSetViewState = (anchor, scrollTop) => {
+  pendingViewState = normalizeViewState(anchor, scrollTop);
+  applyPendingViewState();
+};
+window.addEventListener("scroll", scheduleViewStateReport, { passive: true });
+
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
@@ -177,6 +195,7 @@ const proofingController = new ProofingController({
 window.addEventListener("pagehide", () => {
   disposeProjectLinks();
   imageUploads.dispose();
+  viewStateReporter.dispose();
   void proofingController.dispose();
 }, { once: true });
 
@@ -231,8 +250,13 @@ async function createEditor() {
     crepe.editor.use($prose(() => new Plugin({
       view: () => ({
         update(view, previousState) {
-          if (!view.state.doc.eq(previousState.doc)) {
+          const documentChanged = !view.state.doc.eq(previousState.doc);
+          if (documentChanged) {
             bridgeSync.recordDocumentChange(creatingEditor);
+          }
+          // An edit moves the anchor even when the selection object is unchanged.
+          if (documentChanged || !view.state.selection.eq(previousState.selection)) {
+            scheduleViewStateReport();
           }
         },
       }),
@@ -286,6 +310,59 @@ async function createEditor() {
   }
   findBar.syncToView();
   outline.refresh();
+  // A restore that arrived while this editor was being built lands on the finished one.
+  applyPendingViewState();
+}
+
+function scrollingElement(): Element {
+  return document.scrollingElement ?? document.documentElement;
+}
+
+function currentViewState(): ViewState | undefined {
+  if (!crepe || creatingEditor) {
+    return undefined;
+  }
+  try {
+    const anchor = crepe.editor.ctx.get(editorViewCtx).state.selection.anchor;
+    return normalizeViewState(anchor, scrollingElement().scrollTop);
+  } catch {
+    return undefined;
+  }
+}
+
+function scheduleViewStateReport() {
+  const state = currentViewState();
+  if (state) {
+    viewStateReporter.report(state);
+  }
+}
+
+/**
+ * Puts the caret and scroll position the IDE handed over onto the editor, once there is an editor to
+ * put them on. The IDE sends the state after the content, so normally this applies at once; during
+ * an editor rebuild it waits for createEditor to finish.
+ */
+function applyPendingViewState() {
+  const state = pendingViewState;
+  if (!state || !crepe || !editorReady || creatingEditor) {
+    return;
+  }
+  pendingViewState = undefined;
+  try {
+    const view = crepe.editor.ctx.get(editorViewCtx);
+    const { doc, tr } = view.state;
+    const position = Math.min(state.anchor, doc.content.size);
+    // No scrollIntoView: the saved scroll offset is authoritative, not the caret's line.
+    view.dispatch(tr.setSelection(TextSelection.near(doc.resolve(position))));
+  } catch {
+    // The selection is best-effort; the scroll position below is the part people notice.
+  }
+  scrollingElement().scrollTop = state.scrollTop;
+  // Code blocks and images finish laying out after the first paint, which can leave the document
+  // too short for the offset on the first attempt.
+  window.requestAnimationFrame(() => {
+    scrollingElement().scrollTop = state.scrollTop;
+  });
 }
 
 /**
