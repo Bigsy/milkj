@@ -18,3 +18,13 @@ source without normalizing unrelated content.
 
 The complete license text is included in the MilkJ plugin artifact at
 `third-party/diff-match-patch-LICENSE`.
+
+MilkJ includes **DOMPurify 3.4.14** for sanitizing raw HTML blocks before they are rendered in the
+editor preview.
+
+- Project: https://github.com/cure53/DOMPurify
+- Copyright (c) Cure53 and other contributors
+- License: MPL-2.0 OR Apache-2.0 (MilkJ redistributes it under the Apache License 2.0)
+
+The complete license text is included in the MilkJ plugin artifact at
+`third-party/dompurify-LICENSE`.

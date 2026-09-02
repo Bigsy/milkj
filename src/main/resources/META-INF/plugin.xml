@@ -125,8 +125,8 @@
 
         <!--
           Registers the Milkdown WYSIWYG editor as an additional editor tab for Markdown files.
-          PLACE_AFTER_DEFAULT_EDITOR keeps IntelliJ's native Markdown editor as the default tab and
-          adds "MilkJ" as a switchable tab beside it (tweak the policy in the provider).
+          MilkJEditorProvider.getPolicy places the tab before or after IntelliJ's native Markdown
+          editor depending on the "Default editor" setting in Settings | Tools | MilkJ.
         -->
         <fileEditorProvider implementation="com.hedworth.milkj.editor.MilkJEditorProvider"/>
         <!-- "Shortcuts" reference tab; hidden via the checkbox in Settings | Tools | MilkJ. -->

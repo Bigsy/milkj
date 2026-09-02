@@ -17,7 +17,6 @@
     "@codemirror/language-data": "6.5.2",
     "@milkdown/crepe": "7.21.2",
     "@milkdown/kit": "7.21.2",
-    "@milkdown/theme-nord": "7.21.2",
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.4.14",
     "harper.js": "2.7.0",

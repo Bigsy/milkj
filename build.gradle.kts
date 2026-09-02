@@ -18,7 +18,6 @@ fun usesUnifiedIntelliJIdea(version: String): Boolean {
 //
 // NOTE: This uses the modern IntelliJ Platform Gradle Plugin 2.x, not the legacy
 // org.jetbrains.intellij 1.x plugin.
-// Verify/bump the plugin + Kotlin versions to the latest before the first real build.
 
 plugins {
     id("java")
@@ -69,7 +68,9 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = provider { null } // open-ended; handler uses the modern JCEF API (262+)
+            // Open-ended: MilkJResourceHandler extends CefResourceHandlerAdapter, so JCEF's 2026.2+
+            // interface additions are absorbed by the adapter without referencing the newer types.
+            untilBuild = provider { null }
         }
     }
 
@@ -138,6 +139,11 @@ tasks {
         from("frontend/node_modules/diff-match-patch/LICENSE") {
             into("third-party")
             rename { "diff-match-patch-LICENSE" }
+        }
+        // DOMPurify is "MPL-2.0 OR Apache-2.0"; LICENSE is the Apache 2.0 text we redistribute under.
+        from("frontend/node_modules/dompurify/LICENSE") {
+            into("third-party")
+            rename { "dompurify-LICENSE" }
         }
     }
 }
