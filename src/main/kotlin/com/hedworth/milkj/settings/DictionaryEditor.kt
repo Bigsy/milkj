@@ -68,13 +68,10 @@ internal class DictionaryEditor : JPanel(BorderLayout(0, 6)) {
         )
     }
 
-    /** Reloads the list and returns the words to compare later edits against. */
-    fun reset(words: Iterable<String>): List<String> {
-        val normalized = normalizeDictionary(words).toList()
-        replaceWords(normalized)
+    /** Discards a half-typed word and its validation message. */
+    fun clearInput() {
         field.text = ""
         showValidation(null)
-        return normalized
     }
 
     fun replaceWords(words: Iterable<String>) {

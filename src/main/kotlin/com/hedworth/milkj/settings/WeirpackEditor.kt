@@ -88,11 +88,9 @@ internal class WeirpackEditor : JPanel(BorderLayout(0, 4)) {
     fun snapshots(): List<WeirpackSnapshot> =
         packs().map { WeirpackSnapshot(it.name, it.enabled, it.data) }
 
-    /** Reloads the table and returns the snapshots to compare later edits against. */
-    fun reset(packs: Iterable<WeirpackSetting>): List<WeirpackSnapshot> {
-        replacePacks(packs)
+    /** Hides whatever the last import or failure left on the status line. */
+    fun clearStatus() {
         showStatus(null, error = false)
-        return snapshots()
     }
 
     fun replacePacks(packs: Iterable<WeirpackSetting>) {

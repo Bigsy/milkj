@@ -1,29 +1,30 @@
 package com.hedworth.milkj.settings
 
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.ui.ComboBox
+import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBTextField
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
-import java.awt.event.ItemListener
-import javax.swing.JComboBox
+import com.intellij.ui.dsl.builder.AlignX
+import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.Row
+import com.intellij.ui.dsl.builder.bindItem
+import com.intellij.ui.dsl.builder.bindSelected
+import com.intellij.ui.dsl.builder.bindText
+import com.intellij.ui.dsl.builder.panel
+import com.intellij.ui.dsl.builder.selected
 import javax.swing.JComponent
-import javax.swing.JPanel
 
+/** Settings | Tools | MilkJ. */
 class MilkJConfigurable : Configurable {
     private val settings: MilkJSettings = MilkJSettings.getInstance()
-    private var panel: JPanel? = null
-    private var themeCombo: JComboBox<MilkJSettings.ThemeMode>? = null
-    private var editorThemeCombo: JComboBox<MilkJSettings.EditorTheme>? = null
-    private var mermaidThemeCombo: JComboBox<MilkJSettings.MermaidTheme>? = null
-    private var defaultEditorCombo: JComboBox<MilkJSettings.DefaultEditorMode>? = null
-    private var placeholderField: JBTextField? = null
-    private var imageUploadDirectoryField: JBTextField? = null
-    private var showShortcutsTabCheckBox: JBCheckBox? = null
-    private var spellcheckCheckBox: JBCheckBox? = null
-    private var proofingDialectCombo: JComboBox<MilkJSettings.ProofingDialect>? = null
-    private var spellcheckListener: ItemListener? = null
+
+    /**
+     * Edits land here first and [apply] is what pushes them into [MilkJSettings]. The bindings read
+     * and write it through lambdas rather than property references, so [reset] can swap in a fresh
+     * copy of the persisted state without leaving the components bound to the old one.
+     */
+    private var workingState: MilkJSettings.State = settings.state.copy()
+    private var dialogPanel: DialogPanel? = null
     private var dictionaryEditor: DictionaryEditor? = null
     private var dictionaryBaseline: List<String> = emptyList()
     private var weirpackEditor: WeirpackEditor? = null
@@ -32,140 +33,145 @@ class MilkJConfigurable : Configurable {
     override fun getDisplayName(): String = "MilkJ"
 
     override fun createComponent(): JComponent {
-        val createdPanel = JPanel(GridBagLayout())
-        panel = createdPanel
-
-        themeCombo = JComboBox(MilkJSettings.ThemeMode.entries.toTypedArray())
-        editorThemeCombo = JComboBox(MilkJSettings.EditorTheme.entries.toTypedArray())
-        mermaidThemeCombo = JComboBox(MilkJSettings.MermaidTheme.entries.toTypedArray())
-        defaultEditorCombo = JComboBox(MilkJSettings.DefaultEditorMode.entries.toTypedArray())
-        placeholderField = JBTextField()
-        imageUploadDirectoryField = JBTextField().apply {
-            toolTipText = "Folder for pasted and dropped images, relative to the Markdown file. Leave blank to use the file's own folder."
+        val dictionary = DictionaryEditor().also { dictionaryEditor = it }
+        val weirpacks = WeirpackEditor().also { weirpackEditor = it }
+        val created = panel {
+            row("Theme mode:") {
+                enumComboBox(
+                    MilkJSettings.ThemeMode.entries,
+                    { workingState.theme },
+                    { workingState.theme = it },
+                )
+            }
+            row("Editor theme:") {
+                enumComboBox(
+                    MilkJSettings.EditorTheme.entries,
+                    { workingState.editorTheme },
+                    { workingState.editorTheme = it },
+                )
+            }
+            row("Mermaid theme:") {
+                enumComboBox(
+                    MilkJSettings.MermaidTheme.entries,
+                    { workingState.mermaidTheme },
+                    { workingState.mermaidTheme = it },
+                )
+            }
+            row("Default editor for Markdown:") {
+                enumComboBox(
+                    MilkJSettings.DefaultEditorMode.entries,
+                    { workingState.defaultEditor },
+                    { workingState.defaultEditor = it },
+                )
+            }
+            row("Placeholder text:") {
+                textField()
+                    .bindText({ workingState.placeholderText }, { workingState.placeholderText = it })
+                    .align(AlignX.FILL)
+                    .resizableColumn()
+            }
+            row("Pasted image folder:") {
+                textField()
+                    .bindText(
+                        { workingState.imageUploadDirectory },
+                        { workingState.imageUploadDirectory = it.trim() },
+                    )
+                    .align(AlignX.FILL)
+                    .resizableColumn()
+                    .comment(
+                        "Where pasted and dropped images are saved, relative to the Markdown " +
+                            "file. Leave blank to use the file's own folder.",
+                    )
+            }
+            row {
+                checkBox("Show the Shortcuts reference tab for Markdown files")
+                    .bindSelected({ workingState.showShortcutsTab }, { workingState.showShortcutsTab = it })
+            }
+            lateinit var spellcheck: Cell<JBCheckBox>
+            row {
+                spellcheck = checkBox("Enable Harper spell checking")
+                    .bindSelected({ workingState.spellcheckEnabled }, { workingState.spellcheckEnabled = it })
+            }
+            row("Proofreading dialect:") {
+                enumComboBox(
+                    MilkJSettings.ProofingDialect.entries,
+                    { workingState.proofingDialect },
+                    { workingState.proofingDialect = it },
+                ).enabledIf(spellcheck.selected)
+            }
+            row("Custom dictionary:") {
+                cell(dictionary).align(AlignX.FILL).resizableColumn()
+            }
+            row("Weirpacks:") {
+                cell(weirpacks).align(AlignX.FILL).resizableColumn()
+            }
         }
-        showShortcutsTabCheckBox = JBCheckBox("Show the Shortcuts reference tab for Markdown files")
-        spellcheckCheckBox = JBCheckBox("Enable Harper spell checking")
-        proofingDialectCombo = JComboBox(MilkJSettings.ProofingDialect.entries.toTypedArray())
-        spellcheckListener = ItemListener {
-            proofingDialectCombo?.isEnabled = spellcheckCheckBox?.isSelected == true
-        }.also { spellcheckCheckBox!!.addItemListener(it) }
-
-        val dictionaryPanel = DictionaryEditor().also { dictionaryEditor = it }
-        val weirpackPanel = WeirpackEditor().also { weirpackEditor = it }
-
-        createdPanel.addRow(0, "Theme mode:", themeCombo!!)
-        createdPanel.addRow(1, "Editor theme:", editorThemeCombo!!)
-        createdPanel.addRow(2, "Mermaid theme:", mermaidThemeCombo!!)
-        createdPanel.addRow(3, "Default editor for Markdown:", defaultEditorCombo!!)
-        createdPanel.addRow(4, "Placeholder text:", placeholderField!!)
-        createdPanel.addRow(5, "Pasted image folder:", imageUploadDirectoryField!!)
-        createdPanel.addRow(6, "", showShortcutsTabCheckBox!!)
-        createdPanel.addRow(7, "", spellcheckCheckBox!!)
-        createdPanel.addRow(8, "Proofreading dialect:", proofingDialectCombo!!)
-        createdPanel.addRow(9, "Custom dictionary:", dictionaryPanel)
-        createdPanel.addRow(10, "Weirpacks:", weirpackPanel)
+        dialogPanel = created
         reset()
-        return createdPanel
+        return created
     }
 
-    override fun isModified(): Boolean {
-        val state = settings.state
-        return themeCombo?.selectedItem != state.theme ||
-            editorThemeCombo?.selectedItem != state.editorTheme ||
-            mermaidThemeCombo?.selectedItem != state.mermaidTheme ||
-            defaultEditorCombo?.selectedItem != state.defaultEditor ||
-            placeholderField?.text != state.placeholderText ||
-            imageUploadDirectoryField?.text?.trim() != state.imageUploadDirectory ||
-            showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab ||
-            spellcheckCheckBox?.isSelected != state.spellcheckEnabled ||
-            proofingDialectCombo?.selectedItem != state.proofingDialect ||
+    override fun isModified(): Boolean =
+        dialogPanel?.isModified() == true ||
             dictionaryEditor?.words.orEmpty() != dictionaryBaseline ||
             weirpackEditor?.snapshots().orEmpty() != weirpackBaseline
-    }
 
     override fun apply() {
+        dialogPanel?.apply()
         val localWords = dictionaryEditor?.words.orEmpty()
         val additions = localWords.toSet() - dictionaryBaseline.toSet()
         val removals = dictionaryBaseline.toSet() - localWords.toSet()
-        val mergedDictionary = normalizeDictionary(
+        // Only the words this page added or removed are merged, so a word the editor's own
+        // "Add to dictionary" action stored while Settings was open is not thrown away.
+        workingState.customDictionary = normalizeDictionary(
             settings.state.customDictionary.filterNot { it in removals } + additions,
         )
-        settings.update(
-            settings.state.copy().also {
-                it.theme = themeCombo?.selectedItem as MilkJSettings.ThemeMode
-                it.editorTheme =
-                    editorThemeCombo?.selectedItem as MilkJSettings.EditorTheme
-                it.mermaidTheme =
-                    mermaidThemeCombo?.selectedItem as MilkJSettings.MermaidTheme
-                it.defaultEditor =
-                    defaultEditorCombo?.selectedItem as MilkJSettings.DefaultEditorMode
-                it.placeholderText = placeholderField?.text.orEmpty()
-                it.imageUploadDirectory = imageUploadDirectoryField?.text.orEmpty().trim()
-                it.showShortcutsTab = showShortcutsTabCheckBox?.isSelected ?: true
-                it.spellcheckEnabled = spellcheckCheckBox?.isSelected ?: true
-                it.proofingDialect =
-                    proofingDialectCombo?.selectedItem as MilkJSettings.ProofingDialect
-                it.customDictionary = mergedDictionary
-                it.weirpacks = weirpackEditor?.packs() ?: mutableListOf()
-            },
-        )
-        dictionaryEditor?.replaceWords(mergedDictionary)
-        dictionaryBaseline = mergedDictionary.toList()
-        weirpackEditor?.replacePacks(settings.state.weirpacks)
-        weirpackBaseline = weirpackEditor?.snapshots().orEmpty()
+        workingState.weirpacks = weirpackEditor?.packs() ?: mutableListOf()
+        settings.update(workingState)
+        adoptPersistedState()
     }
 
     override fun reset() {
-        val state = settings.state
-        themeCombo?.selectedItem = state.theme
-        editorThemeCombo?.selectedItem = state.editorTheme
-        mermaidThemeCombo?.selectedItem = state.mermaidTheme
-        defaultEditorCombo?.selectedItem = state.defaultEditor
-        placeholderField?.text = state.placeholderText
-        imageUploadDirectoryField?.text = state.imageUploadDirectory
-        showShortcutsTabCheckBox?.isSelected = state.showShortcutsTab
-        spellcheckCheckBox?.isSelected = state.spellcheckEnabled
-        proofingDialectCombo?.selectedItem = state.proofingDialect
-        proofingDialectCombo?.isEnabled = state.spellcheckEnabled
-        dictionaryBaseline = dictionaryEditor?.reset(state.customDictionary).orEmpty()
-        weirpackBaseline = weirpackEditor?.reset(state.weirpacks).orEmpty()
+        adoptPersistedState()
+        // Only a real reset throws away what the user was in the middle of; Apply leaves the
+        // "Imported ..." line and a half-typed dictionary word where they are.
+        dictionaryEditor?.clearInput()
+        weirpackEditor?.clearStatus()
+    }
+
+    /**
+     * Reloads the panel from what [MilkJSettings] actually holds, which is not always what was
+     * handed to it: `update` normalizes the dictionary and the Weirpack list, and re-reading also
+     * puts the trimmed image folder back in the text field and clears the panel's modified flag.
+     */
+    private fun adoptPersistedState() {
+        workingState = settings.state.copy()
+        dialogPanel?.reset()
+        dictionaryEditor?.replaceWords(workingState.customDictionary)
+        dictionaryBaseline = dictionaryEditor?.words.orEmpty()
+        weirpackEditor?.replacePacks(workingState.weirpacks)
+        weirpackBaseline = weirpackEditor?.snapshots().orEmpty()
     }
 
     override fun disposeUIResources() {
-        spellcheckListener?.let { spellcheckCheckBox?.removeItemListener(it) }
-        panel = null
-        themeCombo = null
-        editorThemeCombo = null
-        mermaidThemeCombo = null
-        defaultEditorCombo = null
-        placeholderField = null
-        imageUploadDirectoryField = null
-        showShortcutsTabCheckBox = null
-        spellcheckCheckBox = null
-        proofingDialectCombo = null
-        spellcheckListener = null
+        // Dropping the working copy matters for the Weirpacks: it holds the base64 of any pack the
+        // user removed, which nothing else references once the dialog is gone.
+        workingState = MilkJSettings.State()
+        dialogPanel = null
         dictionaryEditor = null
         dictionaryBaseline = emptyList()
         weirpackEditor = null
         weirpackBaseline = emptyList()
     }
-
-    private fun JPanel.addRow(row: Int, label: String, component: JComponent) {
-        val labelConstraints = GridBagConstraints().apply {
-            gridx = 0
-            gridy = row
-            anchor = GridBagConstraints.WEST
-            insets.set(4, 0, 4, 8)
-        }
-        add(JBLabel(label), labelConstraints)
-
-        val fieldConstraints = GridBagConstraints().apply {
-            gridx = 1
-            gridy = row
-            weightx = 1.0
-            fill = GridBagConstraints.HORIZONTAL
-            insets.set(4, 0, 4, 0)
-        }
-        add(component, fieldConstraints)
-    }
 }
+
+/**
+ * A combo box over an enum whose `toString` is already the display label. A null selection is
+ * impossible for these models, so it is treated as "leave the value alone".
+ */
+private fun <T : Any> Row.enumComboBox(
+    values: List<T>,
+    get: () -> T,
+    set: (T) -> Unit,
+): Cell<ComboBox<T>> =
+    comboBox(values).bindItem(get, { set(it ?: get()) })
