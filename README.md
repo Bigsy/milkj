@@ -31,7 +31,11 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 
 * Relative links resolve from the Markdown file and then the project root; a leading `/` is project-root-relative inside MilkJ, for example `[Frontend](/frontend/src/main.ts#L127-L190)`.
 
-* <br />
+* Paste or drop images into the editor: they are saved next to the Markdown file (in `images/` by default, configurable) and referenced by relative path.
+
+* A document outline shows headings, highlights the current section, and jumps to a heading when selected.
+
+* Harper spell checking with correction suggestions, an application-wide custom dictionary, and importable Weirpacks for custom grammar rules.
 
 * Mermaid diagram previews for `mermaid` fenced code blocks.
 
@@ -47,9 +51,13 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 
 * Configurable default Markdown editor: open Markdown files with the built-in editor first, or with MilkJ first.
 
+* Each MilkJ tab remembers its caret and scroll position across reopening and IDE restarts.
+
+* Zoom with Ctrl/Cmd and `+`, `-` or `0`, or from the settings page; the level applies to every MilkJ tab.
+
 * Theme settings:
 
-  * Follow IDE, Light, or Dark mode.
+  * Follow IDE, Light, or Dark mode (Follow IDE switches live with the IDE theme).
 
   * Editor themes: Nord, Classic, and Frame.
 
@@ -66,7 +74,7 @@ MilkJ settings are available under:
 
 `Settings` -> `Tools` -> `MilkJ`
 
-From there you can choose the default Markdown editor, editor theme, Mermaid theme, and light/dark behavior. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
+From there you can choose the default Markdown editor, editor theme, Mermaid theme, light/dark behavior, zoom level, and the folder pasted images are saved to. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
 
 ## Feedback and support
 

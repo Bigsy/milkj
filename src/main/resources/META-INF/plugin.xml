@@ -15,10 +15,11 @@
     <ul>
         <li>WYSIWYG rich-text editing with two-way Markdown source synchronization.</li>
         <li>Tables, task lists, headings, links, images, blockquotes, and highlighted code blocks.</li>
+        <li>Paste or drop images: they are saved next to the Markdown file and linked by relative path.</li>
         <li>Mermaid diagram previews and LaTeX math rendering.</li>
         <li>Harper spelling and grammar checking, a custom dictionary, and importable Weirpacks.</li>
-        <li>Cmd/Ctrl-click navigation from Markdown links and project paths to files and line ranges.</li>
-        <li>Configurable themes and the option to open Markdown files in MilkJ by default.</li>
+        <li>Cmd/Ctrl-click navigation from Markdown links and project paths to files and line ranges, and from web links to the browser.</li>
+        <li>Configurable themes, zoom, and the option to open Markdown files in MilkJ by default.</li>
     </ul>
     Open a Markdown file and select the <b>MilkJ</b> editor tab to get started.
     ]]></description>
@@ -33,6 +34,16 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.20</b>
+    <ul>
+        <li>Pasted and dropped images are now saved as files next to the Markdown document (in a configurable folder, <code>images/</code> by default) and referenced by relative path, instead of ending up as temporary <code>blob:</code> URLs that broke on reload.</li>
+        <li>"Follow IDE" theme now switches live when the IDE look and feel changes, without reopening the file.</li>
+        <li>Each MilkJ tab remembers its caret and scroll position across reopening and IDE restarts.</li>
+        <li>Zoom the editor with Cmd/Ctrl and +, - or 0, or from Settings | Tools | MilkJ; the level applies to every MilkJ tab.</li>
+        <li>Also opens <code>.mdown</code>, <code>.mkd</code> and <code>.mkdn</code> files.</li>
+        <li>The settings page was rebuilt; the bundled third-party license list is now complete and shipped inside the plugin.</li>
+    </ul>
+    <br/>
     <b>0.1.19</b>
     <ul>
         <li>Web links are now clickable: clicking an http, https, or mailto link opens it in your system's default browser instead of doing nothing.</li>
