@@ -1,5 +1,6 @@
 package com.hedworth.milkj.bridge
 
+import com.hedworth.milkj.images.ImageUploads
 import com.hedworth.milkj.navigation.FileLinkNavigator
 import com.hedworth.milkj.navigation.ProjectFileLinkNavigator
 import com.hedworth.milkj.navigation.hasIsoControlCharacters
@@ -7,9 +8,11 @@ import com.hedworth.milkj.navigation.strictPercentDecode
 import com.hedworth.milkj.settings.MilkJSettings
 import com.hedworth.milkj.settings.enabledWeirpacks
 import com.hedworth.milkj.settings.normalizeDictionary
+import com.intellij.ide.ui.LafManagerListener
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.WriteAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.editor.Document
@@ -34,6 +37,7 @@ import com.intellij.util.Alarm
 import com.intellij.util.messages.MessageBusConnection
 import com.intellij.ui.JBColor
 import org.jetbrains.annotations.TestOnly
+import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.nio.file.Files
@@ -155,6 +159,16 @@ class MilkJBridge(
             },
         )
 
+        // "Follow IDE" resolves the theme when the config is built, so a look-and-feel switch must
+        // trigger a fresh push or the page keeps the colours it started with.
+        messageBusConnection.subscribe(
+            LafManagerListener.TOPIC,
+            LafManagerListener {
+                if (pageReady) {
+                    pushConfig()
+                }
+            },
+        )
     }
 
     override fun dispose() {
@@ -217,6 +231,9 @@ class MilkJBridge(
                 message.startsWith(NAVIGATION_PREFIX) && pageReady -> {
                     handleNavigationPayload(message.removePrefix(NAVIGATION_PREFIX))
                 }
+                message.startsWith(IMAGE_UPLOAD_PREFIX) && pageReady -> {
+                    handleImageUpload(message.removePrefix(IMAGE_UPLOAD_PREFIX))
+                }
                 message.startsWith(EXTERNAL_URL_PREFIX) && pageReady -> {
                     handleExternalUrlPayload(message.removePrefix(EXTERNAL_URL_PREFIX))
                 }
@@ -272,6 +289,49 @@ class MilkJBridge(
             return null
         }
         return target
+    }
+
+    private fun handleImageUpload(payload: String) {
+        val requestId = payload.substringBefore(':').takeIf(ImageUploads::isValidRequestId)
+        fun refuse(reason: String) {
+            LOG.warn("Refused MilkJ image upload: $reason")
+            requestId?.let { replyImageUploaded(it, null) }
+            notifyImageUploadFailed(reason)
+        }
+
+        if (!file.isWritable || syncBlocked) {
+            refuse("The Markdown file is read-only in MilkJ right now.")
+            return
+        }
+        val request = ImageUploads.parse(payload).getOrElse { error ->
+            refuse(error.message ?: "The upload message was malformed.")
+            return
+        }
+        val relativePath = try {
+            WriteAction.compute<String, IOException> {
+                ImageUploads.save(file, settings.state.imageUploadDirectory, request, requestor = this)
+            }
+        } catch (error: IOException) {
+            refuse(error.message ?: "The image could not be written.")
+            return
+        }
+        replyImageUploaded(request.requestId, relativePath)
+    }
+
+    private fun replyImageUploaded(requestId: String, relativePath: String?) {
+        val pathJson = relativePath?.toJsonString() ?: "null"
+        executeJavaScript("window.milkjImageUploaded?.(${requestId.toJsonString()}, $pathJson);")
+    }
+
+    private fun notifyImageUploadFailed(reason: String) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("MilkJ")
+            .createNotification(
+                "MilkJ could not save the pasted image",
+                StringUtil.escapeXmlEntities(reason),
+                NotificationType.WARNING,
+            )
+            .notify(project)
     }
 
     private fun notifyRoundTripFailure(encodedReason: String) {
@@ -516,6 +576,7 @@ class MilkJBridge(
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
         private const val NAVIGATION_PREFIX = "navigate:file:"
         private const val EXTERNAL_URL_PREFIX = "navigate:url:"
+        private const val IMAGE_UPLOAD_PREFIX = "image:upload:"
         private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
         private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024

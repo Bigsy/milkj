@@ -90,6 +90,8 @@ describe("project file links", () => {
 
   it.each([
     "javascript:alert(1)",
+    "HTTP:example.com",
+    "https://example.com/\u0000",
     "data:text/plain,test",
     "#installation",
     "//example.com/file.kt",

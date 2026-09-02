@@ -3,6 +3,7 @@ import { Plugin, PluginKey } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
 
 export interface ProjectLinksHost {
+  /** Opens a project file (relative path, project-root path, `file://` URL, or `#L` reference). */
   navigate(href: string): void;
   openExternal(href: string): void;
 }
@@ -170,5 +171,5 @@ const EXTERNAL_URL = /^(?:https?:\/\/|mailto:)/i;
 
 /** Web links are handed to the IDE, which opens them in the OS default browser. */
 export function isExternalUrlCandidate(href: string): boolean {
-  return EXTERNAL_URL.test(href);
+  return EXTERNAL_URL.test(href) && !/[\u0000-\u001f\u007f]/.test(href);
 }

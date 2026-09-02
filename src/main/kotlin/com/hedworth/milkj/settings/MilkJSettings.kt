@@ -55,6 +55,9 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var mermaidTheme: MermaidTheme = MermaidTheme.AUTO
         var defaultEditor: DefaultEditorMode = DefaultEditorMode.BUILT_IN
         var placeholderText: String = "Start writing..."
+        // Where pasted/dropped images are written, relative to the Markdown file. Blank means the
+        // file's own folder.
+        var imageUploadDirectory: String = "images"
         var showShortcutsTab: Boolean = true
         var spellcheckEnabled: Boolean = true
         var proofingDialect: ProofingDialect = ProofingDialect.BRITISH
@@ -68,6 +71,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.mermaidTheme = mermaidTheme
                 it.defaultEditor = defaultEditor
                 it.placeholderText = placeholderText
+                it.imageUploadDirectory = imageUploadDirectory
                 it.showShortcutsTab = showShortcutsTab
                 it.spellcheckEnabled = spellcheckEnabled
                 it.proofingDialect = proofingDialect

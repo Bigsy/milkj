@@ -37,6 +37,7 @@ class MilkJConfigurable : Configurable {
     private var mermaidThemeCombo: JComboBox<MilkJSettings.MermaidTheme>? = null
     private var defaultEditorCombo: JComboBox<MilkJSettings.DefaultEditorMode>? = null
     private var placeholderField: JBTextField? = null
+    private var imageUploadDirectoryField: JBTextField? = null
     private var showShortcutsTabCheckBox: JBCheckBox? = null
     private var spellcheckCheckBox: JBCheckBox? = null
     private var proofingDialectCombo: JComboBox<MilkJSettings.ProofingDialect>? = null
@@ -74,6 +75,9 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo = JComboBox(MilkJSettings.MermaidTheme.entries.toTypedArray())
         defaultEditorCombo = JComboBox(MilkJSettings.DefaultEditorMode.entries.toTypedArray())
         placeholderField = JBTextField()
+        imageUploadDirectoryField = JBTextField().apply {
+            toolTipText = "Folder for pasted and dropped images, relative to the Markdown file. Leave blank to use the file's own folder."
+        }
         showShortcutsTabCheckBox = JBCheckBox("Show the Shortcuts reference tab for Markdown files")
         spellcheckCheckBox = JBCheckBox("Enable Harper spell checking")
         proofingDialectCombo = JComboBox(MilkJSettings.ProofingDialect.entries.toTypedArray())
@@ -89,11 +93,12 @@ class MilkJConfigurable : Configurable {
         createdPanel.addRow(2, "Mermaid theme:", mermaidThemeCombo!!)
         createdPanel.addRow(3, "Default editor for Markdown:", defaultEditorCombo!!)
         createdPanel.addRow(4, "Placeholder text:", placeholderField!!)
-        createdPanel.addRow(5, "", showShortcutsTabCheckBox!!)
-        createdPanel.addRow(6, "", spellcheckCheckBox!!)
-        createdPanel.addRow(7, "Proofreading dialect:", proofingDialectCombo!!)
-        createdPanel.addRow(8, "Custom dictionary:", dictionaryPanel)
-        createdPanel.addRow(9, "Weirpacks:", weirpackPanel)
+        createdPanel.addRow(5, "Pasted image folder:", imageUploadDirectoryField!!)
+        createdPanel.addRow(6, "", showShortcutsTabCheckBox!!)
+        createdPanel.addRow(7, "", spellcheckCheckBox!!)
+        createdPanel.addRow(8, "Proofreading dialect:", proofingDialectCombo!!)
+        createdPanel.addRow(9, "Custom dictionary:", dictionaryPanel)
+        createdPanel.addRow(10, "Weirpacks:", weirpackPanel)
         reset()
         return createdPanel
     }
@@ -105,6 +110,7 @@ class MilkJConfigurable : Configurable {
             mermaidThemeCombo?.selectedItem != state.mermaidTheme ||
             defaultEditorCombo?.selectedItem != state.defaultEditor ||
             placeholderField?.text != state.placeholderText ||
+            imageUploadDirectoryField?.text?.trim() != state.imageUploadDirectory ||
             showShortcutsTabCheckBox?.isSelected != state.showShortcutsTab ||
             spellcheckCheckBox?.isSelected != state.spellcheckEnabled ||
             proofingDialectCombo?.selectedItem != state.proofingDialect ||
@@ -129,6 +135,7 @@ class MilkJConfigurable : Configurable {
                 it.defaultEditor =
                     defaultEditorCombo?.selectedItem as MilkJSettings.DefaultEditorMode
                 it.placeholderText = placeholderField?.text.orEmpty()
+                it.imageUploadDirectory = imageUploadDirectoryField?.text.orEmpty().trim()
                 it.showShortcutsTab = showShortcutsTabCheckBox?.isSelected ?: true
                 it.spellcheckEnabled = spellcheckCheckBox?.isSelected ?: true
                 it.proofingDialect =
@@ -150,6 +157,7 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo?.selectedItem = state.mermaidTheme
         defaultEditorCombo?.selectedItem = state.defaultEditor
         placeholderField?.text = state.placeholderText
+        imageUploadDirectoryField?.text = state.imageUploadDirectory
         showShortcutsTabCheckBox?.isSelected = state.showShortcutsTab
         spellcheckCheckBox?.isSelected = state.spellcheckEnabled
         proofingDialectCombo?.selectedItem = state.proofingDialect
@@ -181,6 +189,7 @@ class MilkJConfigurable : Configurable {
         mermaidThemeCombo = null
         defaultEditorCombo = null
         placeholderField = null
+        imageUploadDirectoryField = null
         showShortcutsTabCheckBox = null
         spellcheckCheckBox = null
         proofingDialectCombo = null

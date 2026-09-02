@@ -80,6 +80,7 @@ class MilkJShortcutsEditor(
                 "Navigation",
                 listOf(
                     "$mod+click a file link or bare path" to "Open the project file at its linked line",
+                    "$mod+click a web or mail link" to "Open it in the system browser or mail client",
                 ),
             ) +
             section(

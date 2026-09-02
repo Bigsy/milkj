@@ -8,8 +8,12 @@ import com.intellij.openapi.editor.Document
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.ide.ui.LafManager
+import com.intellij.ide.ui.LafManagerListener
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.util.Base64
 
 /**
  * Drives the [MilkJBridge] state machine through a [FakeBrowserConnection] instead of a real JCEF
@@ -70,10 +74,16 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         FileDocumentManager.getInstance().saveAllDocuments()
         connection = FakeBrowserConnection()
         navigator = FakeFileLinkNavigator()
+        openedUrls.clear()
         bridge = MilkJBridge(project, file, connection, navigator, openInBrowser = { openedUrls += it })
         Disposer.register(testRootDisposable, bridge)
         bridge.install()
     }
+
+    private val pngBase64 = Base64.getEncoder().encodeToString(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47))
+
+    private fun imageUploadReplies(): List<String> =
+        connection.executedScripts.filter { it.startsWith("window.milkjImageUploaded") }
 
     /** Sends a message the way the page would and lets the bridge's EDT hop run. */
     private fun sendFromPage(message: String) {
@@ -255,6 +265,112 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         assertEmpty(openedUrls)
         assertEquals("original\n", document.text)
+    }
+
+    // --- Live theme ---
+
+    fun testLookAndFeelChangeRepushesConfig() {
+        setUpBridge("original\n")
+        val publisher = ApplicationManager.getApplication().messageBus.syncPublisher(LafManagerListener.TOPIC)
+        publisher.lookAndFeelChanged(LafManager.getInstance())
+        assertTrue(
+            "before ready nothing is pushed",
+            connection.executedScripts.none { it.startsWith("window.milkjApplyConfig") },
+        )
+
+        sendFromPage("ready")
+        connection.executedScripts.clear()
+        publisher.lookAndFeelChanged(LafManager.getInstance())
+
+        assertEquals(1, connection.executedScripts.count { it.startsWith("window.milkjApplyConfig") })
+        assertFalse(isDocumentUnsaved())
+    }
+
+    // --- Image uploads ---
+
+    fun testImageUploadWritesIntoTheConfiguredFolderAndRepliesWithARelativePath() {
+        setUpBridge("# Doc\n")
+        sendFromPage("ready")
+
+        sendFromPage("image:upload:req-1:diagram.png:image/png:$pngBase64")
+
+        val created = file.parent.findFileByRelativePath("images/diagram.png")
+        assertNotNull("the image must be written under images/ next to the Markdown file", created)
+        assertEquals(4, created!!.length)
+        assertEquals(
+            listOf("""window.milkjImageUploaded?.("req-1", "images/diagram.png");"""),
+            imageUploadReplies(),
+        )
+        assertEquals("# Doc\n", document.text)
+        assertFalse("storing an image must not touch the Markdown document", isDocumentUnsaved())
+    }
+
+    fun testImageUploadNeverOverwritesAndHonoursTheFolderSetting() {
+        settings.update(settings.state.copy().apply { imageUploadDirectory = "  assets/img/ " })
+        setUpBridge("# Doc\n")
+        sendFromPage("ready")
+
+        sendFromPage("image:upload:a:shot.png:image/png:$pngBase64")
+        sendFromPage("image:upload:b:shot.png:image/png:$pngBase64")
+
+        assertNotNull(file.parent.findFileByRelativePath("assets/img/shot.png"))
+        assertNotNull(file.parent.findFileByRelativePath("assets/img/shot-2.png"))
+        assertEquals(
+            listOf(
+                """window.milkjImageUploaded?.("a", "assets/img/shot.png");""",
+                """window.milkjImageUploaded?.("b", "assets/img/shot-2.png");""",
+            ),
+            imageUploadReplies(),
+        )
+    }
+
+    fun testBlankFolderSettingStoresBesideTheMarkdownFile() {
+        settings.update(settings.state.copy().apply { imageUploadDirectory = "" })
+        setUpBridge("# Doc\n")
+        sendFromPage("ready")
+
+        sendFromPage("image:upload:r:image.png:image/png:$pngBase64")
+
+        val reply = imageUploadReplies().single()
+        assertTrue(reply, Regex("""window\.milkjImageUploaded\?\.\("r", "image-\d{8}-\d{6}\.png"\);""").matches(reply))
+        assertTrue(file.parent.children.any { it.name.startsWith("image-") && it.extension == "png" })
+    }
+
+    fun testInvalidImageUploadsAreRefusedWithANullReply() {
+        setUpBridge("# Doc\n")
+        sendFromPage("image:upload:early:shot.png:image/png:$pngBase64")
+        sendFromPage("ready")
+
+        sendFromPage("image:upload:pdf:doc.pdf:application/pdf:$pngBase64")
+        sendFromPage("image:upload:junk:shot.png:image/png:%%%")
+        sendFromPage("image:upload:bad id:shot.png:image/png:$pngBase64")
+
+        assertEquals(
+            listOf(
+                """window.milkjImageUploaded?.("pdf", null);""",
+                """window.milkjImageUploaded?.("junk", null);""",
+            ),
+            imageUploadReplies(),
+        )
+        assertNull(file.parent.findChild("images"))
+    }
+
+    fun testImageUploadIsRefusedWhileSyncIsBlocked() {
+        file = myFixture.configureByText("test.md", "document\n").virtualFile
+        document = FileDocumentManager.getInstance().getDocument(file)!!
+        FileDocumentManager.getInstance().saveAllDocuments()
+        connection = FakeBrowserConnection()
+        navigator = FakeFileLinkNavigator()
+        bridge = MilkJBridge(project, file, connection, navigator)
+        bridge.setDiskTextForTest("newer disk content\n")
+        Disposer.register(testRootDisposable, bridge)
+        bridge.install()
+        sendFromPage("ready")
+
+        sendFromPage("image:upload:blocked:shot.png:image/png:$pngBase64")
+
+        assertEquals(listOf("""window.milkjImageUploaded?.("blocked", null);"""), imageUploadReplies())
+        assertNull(file.parent.findChild("images"))
     }
 
     fun testNativeEditDuringPendingPageWriteWins() {
@@ -526,6 +642,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
     fun testSettingsCopyPreservesProofingState() {
         val state = MilkJSettings.State().apply {
+            imageUploadDirectory = "assets"
             spellcheckEnabled = false
             proofingDialect = MilkJSettings.ProofingDialect.CANADIAN
             customDictionary = mutableListOf("MilkJ")
@@ -535,6 +652,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
             })
         }
         val copy = state.copy()
+        assertEquals("assets", copy.imageUploadDirectory)
         assertFalse(copy.spellcheckEnabled)
         assertEquals(MilkJSettings.ProofingDialect.CANADIAN, copy.proofingDialect)
         assertEquals(listOf("MilkJ"), copy.customDictionary)

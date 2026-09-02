@@ -7,6 +7,7 @@ import {
 import { languages } from "@codemirror/language-data";
 import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { editorViewCtx, parserCtx, remarkCtx, serializerCtx } from "@milkdown/kit/core";
+import { uploadConfig } from "@milkdown/kit/plugin/upload";
 import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
@@ -19,6 +20,7 @@ import {
   parseImageSource,
   serializeImageNode,
 } from "./image-source-editor";
+import { ImageUploadClient, createImageUploader } from "./image-upload";
 import { resolveImageDomUrl } from "./image-urls";
 import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { installOutline } from "./outline";
@@ -27,13 +29,20 @@ import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
 import "@milkdown/crepe/theme/common/style.css";
 
-// MilkJ frontend entry point.
+// MilkJ frontend entry point: Crepe (Milkdown's batteries-included WYSIWYG editor) plus MilkJ's own
+// plugins, wired to the Kotlin host (../../src/main/kotlin/.../bridge/MilkJBridge.kt) over a JCEF
+// query bridge.
 //
-// Uses Crepe — Milkdown's batteries-included WYSIWYG editor — as a fast starting point. Swap to the
-// lower-level @milkdown/kit if/when we need full control over plugins, slash menus, theming, etc.
-//
-// The Kotlin host (see ../../src/main/kotlin/.../bridge/MilkJBridge.kt) talks to this page over a
-// JCEF query bridge. The contract below is a placeholder — finalize it alongside the Kotlin side.
+// Page -> IDE, as strings through `window.milkjSendToIde`:
+//   `ready`                                   the editor exists and can receive content
+//   `markdown:<revision>\n<markdown>`          a user edit, based on the IDE's <revision>
+//   `roundtrip:error:<urlencoded reason>`      an edit that could not be merged safely was reverted
+//   `dictionary:add:<urlencoded word>`         add a word to the custom dictionary
+//   `navigate:file:<urlencoded href>`          Cmd/Ctrl-click on a project file link
+//   `navigate:url:<urlencoded href>`           Cmd/Ctrl-click on an http(s)/mailto link
+//   `image:upload:<id>:<name>:<mime>:<base64>` store a pasted/dropped image next to the file
+// IDE -> page: `window.milkjSetMarkdown(markdown, revision)`, `window.milkjApplyConfig(json)` and
+// `window.milkjImageUploaded(requestId, relativePathOrNull)`.
 
 declare global {
   interface Window {
@@ -42,6 +51,9 @@ declare global {
     // Called by the IDE to push fresh Markdown into the editor (external edits, initial load).
     milkjSetMarkdown?: (markdown: string, revision: number) => void;
     milkjApplyConfig?: (config: MilkJConfig) => void;
+    // Called by the IDE once a pasted/dropped image was written (path relative to the Markdown
+    // file) or refused (null).
+    milkjImageUploaded?: (requestId: string, relativePath: string | null) => void;
     milkjBridgeInstalled?: () => void;
   }
 }
@@ -148,6 +160,14 @@ const outline = installOutline({
   },
 });
 
+const imageUploads = new ImageUploadClient({
+  send: (message) => window.milkjSendToIde?.(message),
+});
+window.milkjImageUploaded = (requestId, relativePath) => {
+  imageUploads.complete(requestId, relativePath);
+};
+const uploadImages = createImageUploader(imageUploads);
+
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
@@ -156,6 +176,7 @@ const proofingController = new ProofingController({
 });
 window.addEventListener("pagehide", () => {
   disposeProjectLinks();
+  imageUploads.dispose();
   void proofingController.dispose();
 }, { once: true });
 
@@ -192,8 +213,19 @@ async function createEditor() {
           // Markdown paths are mapped to a project-scoped endpoint supplied by the IDE; remote,
           // data, and blob URLs pass through unchanged.
           proxyDomURL: (src) => resolveImageDomUrl(src, currentLocalImageBaseUrl),
+          // The image block's own "Upload file" button. Paste and drop go through the uploader
+          // below instead, so a refused file leaves no node behind.
+          onUpload: async (file) => (await imageUploads.upload(file)) ?? "",
         },
       },
+    });
+    // Overrides Crepe's uploader, which would otherwise hand `URL.createObjectURL(file)` to the
+    // Markdown for pasted/dropped images when no onUpload is configured (and cannot skip a file).
+    crepe.editor.config((ctx) => {
+      ctx.update(uploadConfig.key, (previous) => ({
+        ...previous,
+        uploader: (files, schema) => uploadImages(files, schema),
+      }));
     });
     crepe.editor.use($prose(() => search()));
     crepe.editor.use($prose(() => new Plugin({
