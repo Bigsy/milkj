@@ -3,10 +3,13 @@ package com.hedworth.milkj.settings
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogPanel
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.RightGap
 import com.intellij.ui.dsl.builder.Row
+import com.intellij.ui.dsl.builder.bindIntValue
 import com.intellij.ui.dsl.builder.bindItem
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.bindText
@@ -81,6 +84,16 @@ class MilkJConfigurable : Configurable {
                     .comment(
                         "Where pasted and dropped images are saved, relative to the Markdown " +
                             "file. Leave blank to use the file's own folder.",
+                    )
+            }
+            row("Zoom:") {
+                spinner(ZoomLevels.MIN_PERCENT..ZoomLevels.MAX_PERCENT, step = 10)
+                    .bindIntValue({ workingState.zoomPercent }, { workingState.zoomPercent = it })
+                    .gap(RightGap.SMALL)
+                label("%")
+                    .comment(
+                        "Applies to every MilkJ tab. In the editor, ${shortcutModifier()}+= and " +
+                            "${shortcutModifier()}+- zoom in and out and ${shortcutModifier()}+0 resets.",
                     )
             }
             row {
@@ -164,6 +177,8 @@ class MilkJConfigurable : Configurable {
         weirpackBaseline = emptyList()
     }
 }
+
+private fun shortcutModifier(): String = if (SystemInfo.isMac) "Cmd" else "Ctrl"
 
 /**
  * A combo box over an enum whose `toString` is already the display label. A null selection is

@@ -23,6 +23,13 @@ interface MilkJBrowserConnection {
     fun connect(onMessageFromPage: (String) -> Unit)
 
     fun executeJavaScript(script: String)
+
+    /**
+     * Browser page zoom as a scale factor (1.0 is 100%). Chromium keeps zoom per origin, and every
+     * MilkJ page shares one, so this reaches all open MilkJ tabs at once. Only meaningful once the
+     * page has loaded.
+     */
+    fun setZoom(scale: Double)
 }
 
 /** Production implementation backed by a [JBCefBrowser]. */
@@ -60,6 +67,11 @@ class JcefBrowserConnection(private val browser: JBCefBrowser) : MilkJBrowserCon
 
     override fun executeJavaScript(script: String) {
         browser.cefBrowser.executeJavaScript(script, MilkJWebResources.indexUrl, 0)
+    }
+
+    override fun setZoom(scale: Double) {
+        // JBCefBrowserBase converts the scale to Chromium's logarithmic zoom level itself.
+        browser.setZoomLevel(scale)
     }
 
     override fun dispose() {

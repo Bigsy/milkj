@@ -84,6 +84,13 @@ class MilkJShortcutsEditor(
                 ),
             ) +
             section(
+                "View",
+                listOf(
+                    "$mod+= / $mod+-" to "Zoom in / out (applies to every MilkJ tab)",
+                    "$mod+0" to "Reset zoom to 100%",
+                ),
+            ) +
+            section(
                 "Formatting",
                 listOf(
                     "$mod+B" to "Bold",

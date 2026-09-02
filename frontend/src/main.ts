@@ -28,6 +28,7 @@ import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
 import type { ProofingDialect } from "./proofing/types";
 import { type ViewState, ViewStateReporter, normalizeViewState } from "./view-state";
+import { installZoomShortcuts } from "./zoom-keys";
 import "@milkdown/crepe/theme/common/style.css";
 
 // MilkJ frontend entry point: Crepe (Milkdown's batteries-included WYSIWYG editor) plus MilkJ's own
@@ -43,6 +44,7 @@ import "@milkdown/crepe/theme/common/style.css";
 //   `navigate:url:<urlencoded href>`           Cmd/Ctrl-click on an http(s)/mailto link
 //   `image:upload:<id>:<name>:<mime>:<base64>` store a pasted/dropped image next to the file
 //   `viewstate:<anchor>:<scrollTop>`           caret and scroll position, for the editor tab's state
+//   `zoom:in` | `zoom:out` | `zoom:reset`      Ctrl/Cmd +, - or 0; the IDE owns the zoom level
 // IDE -> page: `window.milkjSetMarkdown(markdown, revision)`, `window.milkjApplyConfig(json)`,
 // `window.milkjImageUploaded(requestId, relativePathOrNull)` and
 // `window.milkjSetViewState(anchor, scrollTop)`.
@@ -186,6 +188,11 @@ window.milkjSetViewState = (anchor, scrollTop) => {
 };
 window.addEventListener("scroll", scheduleViewStateReport, { passive: true });
 
+// Zoom is applied by the IDE through the browser's page zoom, not by the page itself.
+const disposeZoomShortcuts = installZoomShortcuts({
+  send: (message) => window.milkjSendToIde?.(message),
+});
+
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
@@ -196,6 +203,7 @@ window.addEventListener("pagehide", () => {
   disposeProjectLinks();
   imageUploads.dispose();
   viewStateReporter.dispose();
+  disposeZoomShortcuts();
   void proofingController.dispose();
 }, { once: true });
 

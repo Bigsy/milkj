@@ -42,6 +42,26 @@ class MilkJSettingsTest : BasePlatformTestCase() {
         assertEquals("House style", copy.weirpacks.single().name)
     }
 
+    fun testZoomPercentDefaultsCopiesAndClampsOnLoad() {
+        assertEquals(100, settings.state.zoomPercent)
+        assertEquals(175, MilkJSettings.State().apply { zoomPercent = 175 }.copy().zoomPercent)
+
+        settings.loadState(MilkJSettings.State().apply { zoomPercent = 7 })
+        assertEquals(50, settings.state.zoomPercent)
+        settings.update(settings.state.copy().apply { zoomPercent = 9000 })
+        assertEquals(300, settings.state.zoomPercent)
+    }
+
+    fun testZoomLadderStepsFromInBetweenValues() {
+        assertEquals(100, ZoomLevels.zoomIn(95))
+        assertEquals(90, ZoomLevels.zoomOut(95))
+        assertEquals(67, ZoomLevels.zoomIn(50))
+        assertEquals(300, ZoomLevels.zoomIn(300))
+        assertEquals(50, ZoomLevels.zoomOut(50))
+        assertEquals(100, ZoomLevels.apply("reset", 250))
+        assertNull(ZoomLevels.apply("bigger", 100))
+    }
+
     fun testLoadAndUpdateNormalizeDictionary() {
         settings.loadState(MilkJSettings.State().apply {
             customDictionary = mutableListOf(" zebra ", "Apple", "Apple", "two\u00a0words", "two\uFEFFwords", "---")

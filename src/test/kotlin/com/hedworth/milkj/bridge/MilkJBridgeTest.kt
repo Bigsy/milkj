@@ -52,6 +52,12 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         override fun executeJavaScript(script: String) {
             executedScripts += script
         }
+
+        val zoomScales = mutableListOf<Double>()
+
+        override fun setZoom(scale: Double) {
+            zoomScales += scale
+        }
     }
 
     private class FakeFileLinkNavigator : FileLinkNavigator {
@@ -338,6 +344,61 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertEquals("malformed reports must not disturb the cached state", MilkJEditorState(40, 1200), bridge.viewState)
         assertEquals("# Doc\n", document.text)
         assertFalse(isDocumentUnsaved())
+    }
+
+    // --- Zoom ---
+
+    fun testZoomIsAppliedWithTheConfigOnceThePageIsReady() {
+        settings.update(settings.state.copy().apply { zoomPercent = 125 })
+        setUpBridge("# Doc\n")
+        assertEmpty("the browser has no page to zoom before ready", connection.zoomScales)
+
+        sendFromPage("ready")
+
+        assertEquals(listOf(1.25), connection.zoomScales)
+    }
+
+    fun testZoomKeysFromThePageStepTheSharedSettingAndReachTheBrowser() {
+        setUpBridge("# Doc\n")
+        sendFromPage("zoom:in")
+        assertEquals("must require ready", 100, settings.state.zoomPercent)
+
+        sendFromPage("ready")
+        connection.zoomScales.clear()
+
+        sendFromPage("zoom:in")
+        assertEquals(110, settings.state.zoomPercent)
+        sendFromPage("zoom:in")
+        assertEquals(125, settings.state.zoomPercent)
+        sendFromPage("zoom:out")
+        assertEquals(110, settings.state.zoomPercent)
+        sendFromPage("zoom:reset")
+        assertEquals(100, settings.state.zoomPercent)
+        sendFromPage("zoom:reset")
+        sendFromPage("zoom:sideways")
+        sendFromPage("zoom:")
+        assertEquals(100, settings.state.zoomPercent)
+
+        assertEquals(
+            "each real change is applied to the browser through the settings listener, no-ops are not",
+            listOf(1.1, 1.25, 1.1, 1.0),
+            connection.zoomScales,
+        )
+        assertEquals("# Doc\n", document.text)
+        assertFalse(isDocumentUnsaved())
+    }
+
+    fun testZoomStopsAtTheEndsOfTheLadder() {
+        settings.update(settings.state.copy().apply { zoomPercent = 300 })
+        setUpBridge("# Doc\n")
+        sendFromPage("ready")
+
+        sendFromPage("zoom:in")
+        assertEquals(300, settings.state.zoomPercent)
+
+        settings.update(settings.state.copy().apply { zoomPercent = 50 })
+        sendFromPage("zoom:out")
+        assertEquals(50, settings.state.zoomPercent)
     }
 
     // --- Image uploads ---

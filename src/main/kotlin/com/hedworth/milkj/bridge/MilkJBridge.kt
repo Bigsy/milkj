@@ -267,6 +267,11 @@ class MilkJBridge(
                 message.startsWith(EXTERNAL_URL_PREFIX) && pageReady -> {
                     handleExternalUrlPayload(message.removePrefix(EXTERNAL_URL_PREFIX))
                 }
+                message.startsWith(ZOOM_PREFIX) && pageReady -> {
+                    // The zoom lives in the settings so every tab follows; the settings listener
+                    // above then applies it to this browser along with the others.
+                    settings.applyZoomCommand(message.removePrefix(ZOOM_PREFIX))
+                }
             }
         }
     }
@@ -484,6 +489,9 @@ class MilkJBridge(
             localImageBaseUrl = localImageBaseUrl,
         )
         executeJavaScript("window.milkjApplyConfig?.($configJson);")
+        // Zoom is browser state rather than page state, so it travels beside the config instead of
+        // inside it; pushConfig only ever runs once the page has loaded.
+        connection.setZoom(settings.state.zoomPercent / 100.0)
     }
 
     private fun enterSyncConflict() {
@@ -613,6 +621,7 @@ class MilkJBridge(
         private const val IMAGE_UPLOAD_PREFIX = "image:upload:"
         private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
         private const val VIEW_STATE_PREFIX = "viewstate:"
+        private const val ZOOM_PREFIX = "zoom:"
         private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
         private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
         private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024

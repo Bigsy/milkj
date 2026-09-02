@@ -18,19 +18,29 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
     override fun getState(): State = settingsState
 
     override fun loadState(state: State) {
-        settingsState = state.copy().also {
-            it.customDictionary = normalizeDictionary(it.customDictionary)
-            it.weirpacks = normalizeWeirpacks(it.weirpacks)
-        }
+        settingsState = state.normalizedCopy()
     }
 
     fun update(newState: State) {
-        settingsState = newState.copy().also {
+        settingsState = newState.normalizedCopy()
+        notifyChanged()
+    }
+
+    /** Steps the zoom for a page `zoom:<command>` request; false when nothing changed. */
+    fun applyZoomCommand(command: String): Boolean {
+        val next = ZoomLevels.apply(command, settingsState.zoomPercent) ?: return false
+        if (next == settingsState.zoomPercent) return false
+        settingsState = settingsState.copy().also { it.zoomPercent = next }
+        notifyChanged()
+        return true
+    }
+
+    private fun State.normalizedCopy(): State =
+        copy().also {
+            it.zoomPercent = ZoomLevels.clamp(it.zoomPercent)
             it.customDictionary = normalizeDictionary(it.customDictionary)
             it.weirpacks = normalizeWeirpacks(it.weirpacks)
         }
-        notifyChanged()
-    }
 
     fun addDictionaryWord(rawWord: String): Boolean {
         val word = rawWord.trimDictionaryWhitespace()
@@ -58,6 +68,8 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         // Where pasted/dropped images are written, relative to the Markdown file. Blank means the
         // file's own folder.
         var imageUploadDirectory: String = "images"
+        // Page zoom of every MilkJ tab, in percent; see ZoomLevels for the range.
+        var zoomPercent: Int = ZoomLevels.DEFAULT_PERCENT
         var showShortcutsTab: Boolean = true
         var spellcheckEnabled: Boolean = true
         var proofingDialect: ProofingDialect = ProofingDialect.BRITISH
@@ -72,6 +84,7 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.defaultEditor = defaultEditor
                 it.placeholderText = placeholderText
                 it.imageUploadDirectory = imageUploadDirectory
+                it.zoomPercent = zoomPercent
                 it.showShortcutsTab = showShortcutsTab
                 it.spellcheckEnabled = spellcheckEnabled
                 it.proofingDialect = proofingDialect
