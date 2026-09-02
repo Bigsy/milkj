@@ -2,7 +2,7 @@
 
 [Install MilkJ Markdown from JetBrains Marketplace](https://plugins.jetbrains.com/plugin/32518-milkj)
 
-MilkJ Markdown is a WYSIWYG Markdown editor for JetBrains IDEs. It adds a rich-text editor tab for `.md` and `.markdown` files while keeping the built-in Markdown source editor available alongside it.
+MilkJ Markdown is a WYSIWYG Markdown editor for JetBrains IDEs. It adds a rich-text editor tab for `.md`, `.markdown`, `.mdown`, `.mkd` and `.mkdn` files while keeping the built-in Markdown source editor available alongside it.
 
 Use it for README files, documentation, project notes, and AI-generated plans without leaving your IDE. Open a Markdown file and switch to the **MilkJ** tab to edit visually; switch back to the native tab whenever you want direct access to the source.
 
@@ -19,7 +19,7 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 
 * WYSIWYG rich-text Markdown editing powered by Milkdown and Crepe.
 
-* Native JetBrains editor tab integration for `.md` and `.markdown` files.
+* Native JetBrains editor tab integration for `.md`, `.markdown`, `.mdown`, `.mkd` and `.mkdn` files.
 
 * Two-way sync with the IntelliJ document model, so edits flow between MilkJ and the built-in Markdown editor.
 

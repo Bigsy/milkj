@@ -36,6 +36,6 @@ class MilkJEditorProvider : FileEditorProvider, DumbAware {
 
     companion object {
         const val EDITOR_TYPE_ID = "milkj-wysiwyg-editor"
-        internal val MARKDOWN_EXTENSIONS = setOf("md", "markdown")
+        internal val MARKDOWN_EXTENSIONS = setOf("md", "markdown", "mdown", "mkd", "mkdn")
     }
 }
