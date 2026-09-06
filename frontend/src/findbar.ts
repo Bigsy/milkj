@@ -119,7 +119,19 @@ export function installFindBar(host: FindBarHost): FindBar {
   function run(command: Command) {
     const view = host.getView();
     if (view) {
-      command(view.state, view.dispatch);
+      command(view.state, (tr) => {
+        view.dispatch(tr);
+        // ProseMirror ignores scrollIntoView when the DOM selection is outside the
+        // editor (as it is while typing in Find). Scroll the rendered match without
+        // moving focus out of the input. Center it to clear the floating find bar.
+        if (tr.scrolledIntoView) {
+          view.dom.querySelector(".ProseMirror-active-search-match")?.scrollIntoView({
+            block: "center",
+            inline: "nearest",
+            behavior: "instant",
+          });
+        }
+      }, view);
     }
     updateCount();
   }
