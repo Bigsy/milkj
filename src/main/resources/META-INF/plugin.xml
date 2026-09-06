@@ -34,6 +34,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.21</b>
+    <ul>
+        <li>Find now scrolls the active match into view when moving to the next or previous result, while keeping focus in the search field.</li>
+    </ul>
+    <br/>
     <b>0.1.20</b>
     <ul>
         <li>Pasted and dropped images are now saved as files next to the Markdown document (in a configurable folder, <code>images/</code> by default) and referenced by relative path, instead of ending up as temporary <code>blob:</code> URLs that broke on reload.</li>
