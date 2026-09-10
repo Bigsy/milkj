@@ -34,10 +34,14 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.22</b>
+    <ul>
+        <li>Updated Harper proofreading to 2.10.0 for improved grammar corrections and dictionary coverage.</li>
+    </ul>
+    <br/>
     <b>0.1.21</b>
     <ul>
         <li>Find now scrolls the active match into view when moving to the next or previous result, while keeping focus in the search field.</li>
-        <li>Updated Harper proofreading to 2.10.0 for improved grammar corrections and dictionary coverage.</li>
     </ul>
     <br/>
     <b>0.1.20</b>
