@@ -1,9 +1,9 @@
 # Third-party notices
 
-MilkJ includes **Harper 2.7.0**, an offline grammar and spell checker.
+MilkJ includes **Harper 2.10.0**, an offline grammar and spell checker.
 
 - Project: https://github.com/Automattic/harper
-- Copyright 2024 Elijah Potter and Harper contributors
+- Copyright 2024 Automattic Inc.
 - License: Apache License 2.0
 
 The complete license text is included in the MilkJ plugin artifact at

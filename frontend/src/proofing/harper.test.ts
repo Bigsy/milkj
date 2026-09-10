@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeHarperLints } from "./normalize";
 import { HarperEngine, resolveDialect, type HarperLinter } from "./harper";
 
-describe("Harper 2.7.0 integration", () => {
+describe("Harper 2.10.0 integration", () => {
   it("resolves automatic dialects from locale regions", () => {
     expect(resolveDialect("AUTO", "en-GB")).toBe("BRITISH");
     expect(resolveDialect("AUTO", "en-AU")).toBe("AUSTRALIAN");
