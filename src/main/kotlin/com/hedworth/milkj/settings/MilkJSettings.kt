@@ -38,6 +38,9 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
     private fun State.normalizedCopy(): State =
         copy().also {
             it.zoomPercent = ZoomLevels.clamp(it.zoomPercent)
+            it.textFontFamily = it.textFontFamily.trim()
+            it.headingFontFamily = it.headingFontFamily.trim()
+            it.codeFontFamily = it.codeFontFamily.trim()
             it.customDictionary = normalizeDictionary(it.customDictionary)
             it.weirpacks = normalizeWeirpacks(it.weirpacks)
         }
@@ -70,6 +73,10 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
         var imageUploadDirectory: String = "images"
         // Page zoom of every MilkJ tab, in percent; see ZoomLevels for the range.
         var zoomPercent: Int = ZoomLevels.DEFAULT_PERCENT
+        // Font families for the editor content. Blank keeps the font of the selected editor theme.
+        var textFontFamily: String = ""
+        var headingFontFamily: String = ""
+        var codeFontFamily: String = ""
         var showShortcutsTab: Boolean = true
         var spellcheckEnabled: Boolean = true
         var proofingDialect: ProofingDialect = ProofingDialect.BRITISH
@@ -85,6 +92,9 @@ class MilkJSettings : PersistentStateComponent<MilkJSettings.State> {
                 it.placeholderText = placeholderText
                 it.imageUploadDirectory = imageUploadDirectory
                 it.zoomPercent = zoomPercent
+                it.textFontFamily = textFontFamily
+                it.headingFontFamily = headingFontFamily
+                it.codeFontFamily = codeFontFamily
                 it.showShortcutsTab = showShortcutsTab
                 it.spellcheckEnabled = spellcheckEnabled
                 it.proofingDialect = proofingDialect

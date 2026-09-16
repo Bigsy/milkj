@@ -1,5 +1,9 @@
 package com.hedworth.milkj.settings
 
+import com.intellij.openapi.fileChooser.FileChooser
+import com.intellij.openapi.fileChooser.FileChooserDescriptor
+import com.intellij.openapi.fileChooser.FileChooserFactory
+import com.intellij.openapi.fileChooser.FileSaverDescriptor
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
@@ -31,6 +35,8 @@ internal class DictionaryEditor : JPanel(BorderLayout(0, 6)) {
     private val addButton = JButton("Add")
     private val removeButton = JButton("Remove Selected").apply { isEnabled = false }
     private val clearButton = JButton("Clear").apply { isEnabled = false }
+    private val importButton = JButton("Import…")
+    private val exportButton = JButton("Export…").apply { isEnabled = false }
     private val validationLabel = JBLabel().apply { foreground = JBColor.RED }
 
     /** The words currently listed, already normalized by [replaceWords]. */
@@ -46,6 +52,8 @@ internal class DictionaryEditor : JPanel(BorderLayout(0, 6)) {
             showValidation(null)
         }
         clearButton.addActionListener { clearWithConfirmation() }
+        importButton.addActionListener { importWords() }
+        exportButton.addActionListener { exportWords() }
         list.addListSelectionListener { updateButtons() }
 
         val inputPanel = JPanel(BorderLayout(6, 0)).apply {
@@ -56,6 +64,10 @@ internal class DictionaryEditor : JPanel(BorderLayout(0, 6)) {
             add(removeButton)
             add(Box.createHorizontalStrut(6))
             add(clearButton)
+            add(Box.createHorizontalStrut(6))
+            add(importButton)
+            add(Box.createHorizontalStrut(6))
+            add(exportButton)
         }
         add(JBScrollPane(list).apply { preferredSize = Dimension(360, 110) }, BorderLayout.CENTER)
         add(
@@ -113,9 +125,47 @@ internal class DictionaryEditor : JPanel(BorderLayout(0, 6)) {
         showValidation(null)
     }
 
+    private fun importWords() {
+        val descriptor = FileChooserDescriptor(true, false, false, false, false, false)
+            .withTitle("Import Custom Dictionary")
+            .withDescription("Choose a UTF-8 text file with one word per line. Words are added to the current list.")
+        val file = FileChooser.chooseFile(descriptor, null, null) ?: return
+        try {
+            require(file.length <= 1024 * 1024) { "Dictionary files must be 1 MB or smaller." }
+            val bytes = file.contentsToByteArray()
+            require(bytes.size <= 1024 * 1024) { "Dictionary files must be 1 MB or smaller." }
+            val lines = Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes))
+                .toString().lineSequence()
+                .map { it.trim { char -> char.isWhitespace() || char == '\uFEFF' } }
+                .filter { it.isNotEmpty() }.toList()
+            val invalidLine = lines.firstOrNull { !isValidDictionaryWord(it) }
+            require(invalidLine == null) { "Each line must contain one valid dictionary word (64 characters or fewer)." }
+            replaceWords(words + lines)
+            showValidation(null)
+        } catch (exception: Exception) {
+            showValidation("Could not import dictionary: ${exception.message ?: "invalid UTF-8 text"}")
+        }
+    }
+
+    private fun exportWords() {
+        if (model.isEmpty) return
+        val descriptor = FileSaverDescriptor(
+            "Export Custom Dictionary", "Save the current word list as UTF-8 text, one word per line.", "txt",
+        )
+        val file = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, this)
+            .save("milkj-dictionary.txt") ?: return
+        try {
+            file.file.writeText(words.joinToString("\n", postfix = "\n"), Charsets.UTF_8)
+            showValidation(null)
+        } catch (exception: Exception) {
+            showValidation("Could not export dictionary: ${exception.message ?: "unknown error"}")
+        }
+    }
+
     private fun updateButtons() {
         removeButton.isEnabled = !list.isSelectionEmpty
         clearButton.isEnabled = !model.isEmpty
+        exportButton.isEnabled = !model.isEmpty
     }
 
     private fun showValidation(message: String?) {

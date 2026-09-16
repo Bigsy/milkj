@@ -659,6 +659,19 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertTrue(json.contains("\"readonly\":false"))
     }
 
+    fun testFrontendConfigJsonCarriesEscapedFontFamilies() {
+        val state = MilkJSettings.State().apply {
+            textFontFamily = "Fira Sans"
+            headingFontFamily = "Family \"Quoted\""
+        }
+
+        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
+
+        assertTrue(json.contains("\"textFontFamily\":\"Fira Sans\""))
+        assertTrue(json.contains("\"headingFontFamily\":\"Family \\\"Quoted\\\"\""))
+        assertTrue("blank means the editor theme's font", json.contains("\"codeFontFamily\":\"\""))
+    }
+
     fun testFrontendConfigJsonCarriesReadonlyFlag() {
         val json = MilkJBridge.frontendConfigJson(MilkJSettings.State(), readonly = true)
         assertTrue(json.contains("\"readonly\":true"))

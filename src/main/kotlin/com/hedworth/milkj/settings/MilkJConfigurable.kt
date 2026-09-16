@@ -4,9 +4,11 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.ui.FontComboBox
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.Cell
+import com.intellij.ui.dsl.builder.MutableProperty
 import com.intellij.ui.dsl.builder.RightGap
 import com.intellij.ui.dsl.builder.Row
 import com.intellij.ui.dsl.builder.bindIntValue
@@ -95,6 +97,23 @@ class MilkJConfigurable : Configurable {
                         "Applies to every MilkJ tab. In the editor, ${shortcutModifier()}+= and " +
                             "${shortcutModifier()}+- zoom in and out and ${shortcutModifier()}+0 resets.",
                     )
+            }
+            group("Fonts") {
+                row("Text:") {
+                    fontComboBox({ workingState.textFontFamily }, { workingState.textFontFamily = it })
+                }
+                row("Headings:") {
+                    fontComboBox({ workingState.headingFontFamily }, { workingState.headingFontFamily = it })
+                }
+                row("Code:") {
+                    fontComboBox(
+                        { workingState.codeFontFamily },
+                        { workingState.codeFontFamily = it },
+                        monospacedOnly = true,
+                    ).comment(
+                        "&lt;None&gt; keeps the font of the selected editor theme. Size follows the zoom level.",
+                    )
+                }
             }
             row {
                 checkBox("Show the Shortcuts reference tab for Markdown files")
@@ -190,3 +209,22 @@ private fun <T : Any> Row.enumComboBox(
     set: (T) -> Unit,
 ): Cell<ComboBox<T>> =
     comboBox(values).bindItem(get, { set(it ?: get()) })
+
+/**
+ * The platform's font picker, the same control as Settings | Editor | Font. Its "<None>" entry
+ * means "leave the editor theme's font alone" and is stored as a blank family name.
+ */
+private fun Row.fontComboBox(
+    get: () -> String,
+    set: (String) -> Unit,
+    monospacedOnly: Boolean = false,
+): Cell<FontComboBox> {
+    // Family names only (no per-style entries), Latin-capable fonts only, plus the <None> item.
+    val combo = FontComboBox(false, true, true)
+    combo.isMonospacedOnly = monospacedOnly
+    return cell(combo).bind(
+        { component -> if (component.isNoFontSelected) "" else component.fontName.orEmpty() },
+        { component, family -> component.fontName = family.ifBlank { null } },
+        MutableProperty(get, set),
+    )
+}

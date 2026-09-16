@@ -81,6 +81,7 @@ class MilkJShortcutsEditor(
                 listOf(
                     "$mod+click a file link or bare path" to "Open the project file at its linked line",
                     "$mod+click a web or mail link" to "Open it in the system browser or mail client",
+                    "Click a heading link (#section)" to "Jump to that heading in this document",
                 ),
             ) +
             section(

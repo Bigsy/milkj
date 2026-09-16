@@ -6,6 +6,8 @@ export interface ProjectLinksHost {
   /** Opens a project file (relative path, project-root path, `file://` URL, or `#L` reference). */
   navigate(href: string): void;
   openExternal(href: string): void;
+  /** Scrolls to the heading an in-document `#fragment` link points at. */
+  navigateToAnchor?(href: string): void;
 }
 
 export interface BareProjectFileLink {
@@ -61,6 +63,16 @@ export function installProjectLinks(
       event.preventDefault();
       event.stopPropagation();
       host.openExternal(href);
+      return;
+    }
+
+    // In-document heading links scroll on a plain click, as in a rendered README. They must not
+    // reach JCEF either: its default action would change the page URL's fragment and scroll to
+    // whichever element id happens to match, without moving the caret.
+    if (isHeadingAnchor(href)) {
+      event.preventDefault();
+      event.stopPropagation();
+      host.navigateToAnchor?.(href);
       return;
     }
 
@@ -151,6 +163,11 @@ function isUsefulBarePath(href: string): boolean {
 
 function trimFileUrlPunctuation(value: string): string {
   return value.replace(/[.,;!?)\]}]+$/, "");
+}
+
+/** `#fragment` links other than `#L<n>` line references, which are project navigation instead. */
+export function isHeadingAnchor(href: string): boolean {
+  return href.length > 1 && href.startsWith("#") && !LINE_ONLY.test(href);
 }
 
 export function isProjectFileCandidate(href: string): boolean {

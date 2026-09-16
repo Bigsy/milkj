@@ -19,7 +19,7 @@
         <li>Mermaid diagram previews and LaTeX math rendering.</li>
         <li>Harper spelling and grammar checking, a custom dictionary, and importable Weirpacks.</li>
         <li>Cmd/Ctrl-click navigation from Markdown links and project paths to files and line ranges, and from web links to the browser.</li>
-        <li>Configurable themes, zoom, and the option to open Markdown files in MilkJ by default.</li>
+        <li>Configurable themes, fonts, zoom, and the option to open Markdown files in MilkJ by default.</li>
     </ul>
     Open a Markdown file and select the <b>MilkJ</b> editor tab to get started.
     ]]></description>
@@ -34,6 +34,12 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.23</b>
+    <ul>
+        <li>Heading links such as <code>[Usage](#usage)</code> now jump to that heading when clicked, resolved the way GitHub does (duplicate headings included).</li>
+        <li>Choose the text, heading, and code fonts under Settings | Tools | MilkJ with the IDE's own font picker. Leave a font on &lt;None&gt; to keep the editor theme's font.</li>
+    </ul>
+    <br/>
     <b>0.1.22</b>
     <ul>
         <li>Updated Harper proofreading to 2.10.0 for improved grammar corrections and dictionary coverage.</li>

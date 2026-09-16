@@ -52,6 +52,18 @@ class MilkJSettingsTest : BasePlatformTestCase() {
         assertEquals(300, settings.state.zoomPercent)
     }
 
+    fun testFontFamiliesDefaultBlankCopyAndTrimOnLoad() {
+        assertEquals("", settings.state.textFontFamily)
+        assertEquals("", settings.state.headingFontFamily)
+        assertEquals("", settings.state.codeFontFamily)
+        assertEquals("Rubik", MilkJSettings.State().apply { headingFontFamily = "Rubik" }.copy().headingFontFamily)
+
+        settings.loadState(MilkJSettings.State().apply { codeFontFamily = "  JetBrains Mono \n" })
+        assertEquals("JetBrains Mono", settings.state.codeFontFamily)
+        settings.update(settings.state.copy().apply { textFontFamily = " Fira Sans " })
+        assertEquals("Fira Sans", settings.state.textFontFamily)
+    }
+
     fun testZoomLadderStepsFromInBetweenValues() {
         assertEquals(100, ZoomLevels.zoomIn(95))
         assertEquals(90, ZoomLevels.zoomOut(95))

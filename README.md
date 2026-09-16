@@ -27,6 +27,8 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 
 * Clicking a web link (`https`, `http`, or `mailto`) opens it in the system's default browser.
 
+* Heading links such as `[Usage](#usage)` jump to that heading, resolved the way GitHub does (duplicate headings included).
+
 * Project-aware Markdown links and bare paths open in the JetBrains editor with Ctrl-click (Windows/Linux) or Cmd-click (macOS), including one-based references such as `src/main/kotlin/example/Bridge.kt#L151`.
 
 * Relative links resolve from the Markdown file and then the project root; a leading `/` is project-root-relative inside MilkJ, for example `[Frontend](/frontend/src/main.ts#L127-L190)`.
@@ -55,6 +57,8 @@ You can also install it directly from the [JetBrains Marketplace listing](https:
 
 * Zoom with Ctrl/Cmd and `+`, `-` or `0`, or from the settings page; the level applies to every MilkJ tab.
 
+* Font settings: pick the text, heading, and code fonts from the IDE's font list, or keep each editor theme's own.
+
 * Theme settings:
 
   * Follow IDE, Light, or Dark mode (Follow IDE switches live with the IDE theme).
@@ -74,7 +78,7 @@ MilkJ settings are available under:
 
 `Settings` -> `Tools` -> `MilkJ`
 
-From there you can choose the default Markdown editor, editor theme, Mermaid theme, light/dark behavior, zoom level, and the folder pasted images are saved to. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
+From there you can choose the default Markdown editor, editor theme, Mermaid theme, light/dark behavior, zoom level, fonts, and the folder pasted images are saved to. You can also manage individual custom-dictionary entries and import, enable, disable, or remove Harper `.weirpack` archives.
 
 ## Feedback and support
 

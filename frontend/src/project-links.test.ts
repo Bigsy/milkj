@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findBareProjectFileLinks, installProjectLinks } from "./project-links";
+import { findBareProjectFileLinks, installProjectLinks, isHeadingAnchor } from "./project-links";
 
 describe("project file links", () => {
   afterEach(() => {
@@ -66,6 +66,53 @@ describe("project file links", () => {
     expect(openExternal).toHaveBeenCalledWith(href);
     expect(navigate).not.toHaveBeenCalled();
     dispose();
+  });
+
+  it.each([
+    ["plain", {}],
+    ["Ctrl", { ctrlKey: true }],
+    ["Cmd", { metaKey: true }],
+  ])("%s-click on a heading link navigates within the document", (_name, modifiers) => {
+    document.body.innerHTML = '<a href="#getting-started"><em>Getting started</em></a>';
+    const navigate = vi.fn();
+    const openExternal = vi.fn();
+    const navigateToAnchor = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal, navigateToAnchor });
+
+    const event = click(document.querySelector("em")!, modifiers);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(navigateToAnchor).toHaveBeenCalledOnce();
+    expect(navigateToAnchor).toHaveBeenCalledWith("#getting-started");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("still treats #L line references as project navigation", () => {
+    document.body.innerHTML = '<a href="#L12">line 12</a>';
+    const navigate = vi.fn();
+    const openExternal = vi.fn();
+    const navigateToAnchor = vi.fn();
+    const dispose = installProjectLinks({ navigate, openExternal, navigateToAnchor });
+
+    click(document.querySelector("a")!, { metaKey: true });
+
+    expect(navigate).toHaveBeenCalledWith("#L12");
+    expect(navigateToAnchor).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it.each([
+    ["#usage", true],
+    ["#Getting%20Started", true],
+    ["#L12", false],
+    ["#L1-L5", false],
+    ["#", false],
+    ["usage", false],
+    ["https://example.com/#usage", false],
+  ])("isHeadingAnchor(%j) is %s", (href, expected) => {
+    expect(isHeadingAnchor(href)).toBe(expected);
   });
 
   it("does nothing for plain, non-primary, and outside clicks on non-web links", () => {

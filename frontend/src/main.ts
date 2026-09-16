@@ -9,11 +9,14 @@ import { Crepe, CrepeFeature } from "@milkdown/crepe";
 import { editorViewCtx, parserCtx, remarkCtx, serializerCtx } from "@milkdown/kit/core";
 import { uploadConfig } from "@milkdown/kit/plugin/upload";
 import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
+import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose, replaceAll } from "@milkdown/kit/utils";
 import mermaid from "mermaid";
 import { search } from "prosemirror-search";
 import { EditorBridgeSync } from "./bridge-sync";
 import { installFindBar } from "./findbar";
+import { installFontOverrides } from "./fonts";
+import { navigateToHeadingAnchor } from "./heading-anchors";
 import { createHtmlPreviewPlugin } from "./html-preview";
 import {
   createImageSourceEditorPlugin,
@@ -80,6 +83,10 @@ interface MilkJConfig {
   placeholder: string;
   // True when the file is not writable in the IDE; the editor surface must not accept edits.
   readonly?: boolean;
+  // Font family overrides from settings; blank or absent keeps the editor theme's own fonts.
+  textFontFamily?: string;
+  headingFontFamily?: string;
+  codeFontFamily?: string;
   proofingEnabled: boolean;
   proofingDialect: ProofingDialect;
   customDictionary: string[];
@@ -127,21 +134,25 @@ function markUserEdit() {
   bridgeSync.recordUserEdit();
 }
 
+/** The live ProseMirror view, or undefined while the editor is (re)building. */
+function currentView(): EditorView | undefined {
+  if (!crepe || creatingEditor) {
+    return undefined;
+  }
+  try {
+    return crepe.editor.ctx.get(editorViewCtx);
+  } catch {
+    return undefined;
+  }
+}
+
 applyChrome();
+const fontOverrides = installFontOverrides();
 
 // Cmd/Ctrl+F find bar. Created once; each (re)built editor registers the prosemirror-search
 // plugin, and syncToView re-applies any active query to the fresh plugin state.
 const findBar = installFindBar({
-  getView: () => {
-    if (!crepe || creatingEditor) {
-      return undefined;
-    }
-    try {
-      return crepe.editor.ctx.get(editorViewCtx);
-    } catch {
-      return undefined;
-    }
-  },
+  getView: currentView,
   // A replace is a real user edit even though it is dispatched programmatically.
   onUserEdit: markUserEdit,
 });
@@ -153,20 +164,15 @@ const disposeProjectLinks = installProjectLinks({
   openExternal: (href) => {
     window.milkjSendToIde?.(`navigate:url:${encodeURIComponent(href)}`);
   },
-});
-
-const outline = installOutline({
-  getView: () => {
-    if (!crepe || creatingEditor) {
-      return undefined;
-    }
-    try {
-      return crepe.editor.ctx.get(editorViewCtx);
-    } catch {
-      return undefined;
+  navigateToAnchor: (href) => {
+    const view = currentView();
+    if (view) {
+      navigateToHeadingAnchor(view, href);
     }
   },
 });
+
+const outline = installOutline({ getView: currentView });
 
 const imageUploads = new ImageUploadClient({
   send: (message) => window.milkjSendToIde?.(message),
@@ -581,6 +587,11 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
     config.weirpacks,
   );
   applyChrome();
+  fontOverrides.apply({
+    text: config.textFontFamily,
+    heading: config.headingFontFamily,
+    code: config.codeFontFamily,
+  });
   // The placeholder is baked into the editor at creation, and Mermaid bakes its theme into each
   // rendered SVG (previews only re-render when their code block's content changes) — either
   // change needs an editor rebuild to take effect. The IDE pushes config before content, so the
