@@ -3,7 +3,6 @@
 import { Editor, parserCtx, remarkCtx, rootCtx, serializerCtx } from "@milkdown/kit/core";
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
-import DiffMatchPatch from "diff-match-patch";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { mergeEditByBlocks } from "./block-merge";
 import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
@@ -59,7 +58,7 @@ describe("merging a rich-text edit by aligned blocks", () => {
   }
 
   function merge(source: string, editedCanonical: string): string | undefined {
-    return mergeEditByBlocks(new DiffMatchPatch(), source, editedCanonical, split, canonicalize);
+    return mergeEditByBlocks(source, editedCanonical, split, canonicalize);
   }
 
   /** Every merge result must still parse to the document the editor holds. */
@@ -257,33 +256,57 @@ Tail paragraph.
   });
 
   it("gives up instead of guessing when a document cannot be split", () => {
-    expect(mergeEditByBlocks(new DiffMatchPatch(), "a\n", "b\n", () => undefined, canonicalize))
+    expect(mergeEditByBlocks("a\n", "b\n", () => undefined, canonicalize))
       .toBeUndefined();
   });
 
-  it("gives up when the document holds more distinct blocks than there are key codes", () => {
-    const blocks = (count: number): MarkdownBlock => ({
+  /** A split into `count` one-character paragraphs, keyed by `key`. */
+  function paragraphs(count: number, key: (index: number) => string): MarkdownBlock {
+    return {
       type: "root",
       start: 0,
       end: count,
-      key: `root ${count}`,
+      key: "root",
       children: Array.from({ length: count }, (_, index) => ({
         type: "paragraph",
         start: index,
         end: index + 1,
-        key: `paragraph ${index}`,
+        key: key(index),
         children: [],
       })),
-    });
+    };
+  }
 
-    const merged = mergeEditByBlocks(
-      new DiffMatchPatch(),
-      "x".repeat(6500),
-      "y".repeat(6500),
-      (markdown) => blocks(markdown.length),
-      canonicalize,
-    );
+  it("aligns more distinct blocks than a code point per key could encode", () => {
+    // One block of 6,500 changed: the old encoding spent one private-use code point per distinct
+    // key and gave up past 6,400 of them.
+    const source = "x".repeat(6500);
+    const edited = `${"x".repeat(3000)}y${"x".repeat(3499)}`;
+    const split = (markdown: string) =>
+      paragraphs(markdown.length, (index) => `paragraph ${index} ${markdown[index]}`);
 
-    expect(merged).toBeUndefined();
+    expect(mergeEditByBlocks(source, edited, split, canonicalize)).toBe(edited);
+  });
+
+  it("gives up when aligning the blocks needs more edits than its budget", () => {
+    const split = (markdown: string) =>
+      paragraphs(markdown.length, (index) => `paragraph ${markdown[index]}${index}`);
+
+    expect(mergeEditByBlocks("x".repeat(200), "y".repeat(200), split, canonicalize)).toBeUndefined();
+  });
+
+  it("keeps a tight source list byte-exact, without recursing, when only another block changed", () => {
+    // Milkdown writes every bullet list loose; the list's key ignores spread, so the unchanged
+    // list matches its canonical form and keeps its own bytes.
+    const source = "- a\n- b\n\nEdit me.\n";
+    const edited = canonicalize(source).replace("Edit", "Edited");
+    let calls = 0;
+    const counting = (markdown: string) => {
+      calls++;
+      return canonicalize(markdown);
+    };
+
+    expect(mergeEditByBlocks(source, edited, split, counting)).toBe("- a\n- b\n\nEdited me.\n");
+    expect(calls).toBe(0);
   });
 });

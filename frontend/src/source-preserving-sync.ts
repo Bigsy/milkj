@@ -200,7 +200,7 @@ function candidateStrategies(
   // list item) in the editor's formatting, so the line merge gets first refusal.
   if (splitBlocks) {
     rawCandidates.push(() =>
-      mergeEditByBlocks(dmp, sourceMarkdown, editedCanonicalMarkdown, splitBlocks, canonicalize)
+      mergeEditByBlocks(sourceMarkdown, editedCanonicalMarkdown, splitBlocks, canonicalize)
     );
   }
   return rawCandidates;

@@ -1,13 +1,14 @@
-import type DiffMatchPatch from "diff-match-patch";
 import type { MarkdownBlock, MarkdownBlockSplitter } from "./markdown-blocks";
+import { matchSequences } from "./sequence-align";
 import type { MarkdownCanonicalizer } from "./source-preserving-sync";
 
-/** Private-use code points, one per distinct block key, for aligning block sequences with a diff. */
-const KEY_CODE_START = 0xe000;
-const KEY_CODE_LIMIT = 0xf900 - KEY_CODE_START;
+/**
+ * Most blocks one container's alignment may leave unmatched. Real edits change a few blocks; past
+ * this the documents differ too much for a block-by-block merge to be worth its cost.
+ */
+const MAX_BLOCK_EDITS = 100;
 
 interface MergeContext {
-  dmp: DiffMatchPatch;
   source: string;
   edited: string;
   canonicalize: MarkdownCanonicalizer;
@@ -30,7 +31,6 @@ interface BlockSlot {
  * canonical equivalence.
  */
 export function mergeEditByBlocks(
-  dmp: DiffMatchPatch,
   sourceMarkdown: string,
   editedCanonicalMarkdown: string,
   splitBlocks: MarkdownBlockSplitter,
@@ -42,7 +42,7 @@ export function mergeEditByBlocks(
     return undefined;
   }
   return mergeContainer(
-    { dmp, source: sourceMarkdown, edited: editedCanonicalMarkdown, canonicalize },
+    { source: sourceMarkdown, edited: editedCanonicalMarkdown, canonicalize },
     sourceRoot,
     editedRoot,
   );
@@ -56,7 +56,7 @@ function mergeContainer(
 ): string | undefined {
   const sourceBlocks = sourceContainer.children;
   const editedBlocks = editedContainer.children;
-  const slots = alignBlocks(context.dmp, sourceBlocks, editedBlocks);
+  const slots = alignBlocks(sourceBlocks, editedBlocks);
   if (!slots) {
     return undefined;
   }
@@ -157,73 +157,46 @@ function separatorBefore(
 }
 
 /**
- * Aligns two block sequences by content. Each distinct key becomes one private-use code point, so
- * the sequences diff as short strings: equal runs are untouched blocks, and a deleted run followed
- * by an inserted one is the same slot rewritten. Returns undefined when the document holds more
- * distinct blocks than there are code points to spend on them.
+ * Aligns two block sequences by content with a Myers diff over their keys, capped at
+ * MAX_BLOCK_EDITS unmatched blocks: equal keys are untouched blocks, and between two of them the
+ * unmatched blocks pair up in order as the same slots rewritten, leaving the surplus deleted or
+ * inserted. Returns undefined past the cap, so a heavily changed container costs bounded work and
+ * yields no candidate.
  */
 function alignBlocks(
-  dmp: DiffMatchPatch,
   sourceBlocks: MarkdownBlock[],
   editedBlocks: MarkdownBlock[],
 ): BlockSlot[] | undefined {
-  const codes = new Map<string, string>();
-  const encode = (blocks: MarkdownBlock[]): string | undefined => {
-    let encoded = "";
-    for (const block of blocks) {
-      let code = codes.get(block.key);
-      if (code === undefined) {
-        if (codes.size >= KEY_CODE_LIMIT) {
-          return undefined;
-        }
-        code = String.fromCharCode(KEY_CODE_START + codes.size);
-        codes.set(block.key, code);
-      }
-      encoded += code;
+  const ids = new Map<string, number>();
+  const intern = (blocks: MarkdownBlock[]) => blocks.map((block) => {
+    let id = ids.get(block.key);
+    if (id === undefined) {
+      id = ids.size;
+      ids.set(block.key, id);
     }
-    return encoded;
-  };
-  const sourceCodes = encode(sourceBlocks);
-  const editedCodes = encode(editedBlocks);
-  if (sourceCodes === undefined || editedCodes === undefined) {
+    return id;
+  });
+  const pairs = matchSequences(intern(sourceBlocks), intern(editedBlocks), MAX_BLOCK_EDITS);
+  if (!pairs) {
     return undefined;
   }
 
   const slots: BlockSlot[] = [];
   let sourceIndex = 0;
   let editedIndex = 0;
-  let pendingDeletions = 0;
-  const flushDeletions = () => {
-    while (pendingDeletions > 0) {
-      slots.push({ sourceIndex: sourceIndex++, editedIndex: -1 });
-      pendingDeletions--;
-    }
-  };
-  for (const [operation, codeRun] of dmp.diff_main(sourceCodes, editedCodes, false)) {
-    if (operation === -1) {
-      flushDeletions();
-      pendingDeletions = codeRun.length;
-      continue;
-    }
-    if (operation === 0) {
-      flushDeletions();
-    }
-    for (let i = 0; i < codeRun.length; i++) {
-      if (operation === 1 && pendingDeletions === 0) {
-        slots.push({ sourceIndex: -1, editedIndex: editedIndex++ });
-        continue;
-      }
-      // An inserted block that replaces a just-deleted one is the same slot, rewritten.
-      if (operation === 1) {
-        pendingDeletions--;
-      }
+  for (const [sourceMatch, editedMatch] of [...pairs, [sourceBlocks.length, editedBlocks.length]]) {
+    while (sourceIndex < sourceMatch && editedIndex < editedMatch) {
       slots.push({ sourceIndex: sourceIndex++, editedIndex: editedIndex++ });
     }
-    flushDeletions();
-  }
-  flushDeletions();
-  if (sourceIndex !== sourceBlocks.length || editedIndex !== editedBlocks.length) {
-    return undefined;
+    while (sourceIndex < sourceMatch) {
+      slots.push({ sourceIndex: sourceIndex++, editedIndex: -1 });
+    }
+    while (editedIndex < editedMatch) {
+      slots.push({ sourceIndex: -1, editedIndex: editedIndex++ });
+    }
+    if (sourceMatch < sourceBlocks.length) {
+      slots.push({ sourceIndex: sourceIndex++, editedIndex: editedIndex++ });
+    }
   }
   return slots;
 }
