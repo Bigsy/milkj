@@ -34,6 +34,13 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.24</b>
+    <ul>
+        <li>Rich-text edits are no longer reverted in documents whose Markdown is written differently from MilkJ's own style (setext headings, <code>__bold__</code>, <code>*</code> or <code>+</code> bullets, unpadded tables, YAML frontmatter).</li>
+        <li>Everything outside the block you edit now stays byte-for-byte as you wrote it, including list spacing, emphasis markers, escapes and table padding.</li>
+        <li>Fixed long freezes (up to half a minute on 1&nbsp;MB files) when an edit to a large document could not be matched to its Markdown.</li>
+    </ul>
+    <br/>
     <b>0.1.23</b>
     <ul>
         <li>Heading links such as <code>[Usage](#usage)</code> now jump to that heading when clicked, resolved the way GitHub does (duplicate headings included).</li>
