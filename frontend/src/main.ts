@@ -25,7 +25,14 @@ import {
 } from "./image-source-editor";
 import { ImageUploadClient, createImageUploader } from "./image-upload";
 import { resolveImageDomUrl } from "./image-urls";
-import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
+import {
+  type KnownBlockKey,
+  type MarkdownBlock,
+  parseObservingBlocks,
+  splitMarkdownBlocks,
+  splitTopLevelBlocks,
+  type TopLevelBlock,
+} from "./markdown-blocks";
 import { installOutline } from "./outline";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
@@ -83,7 +90,10 @@ let mermaidRenderSeq = 0;
 // window: only a document change that did not happen during an IDE apply may travel back. The IDE
 // also attaches a monotonically increasing revision, so even an unusually delayed callback cannot
 // overwrite a newer document.
-const bridgeSync = new EditorBridgeSync(canonicalizeMarkdown, splitMarkdownBlocksForSync);
+const bridgeSync = new EditorBridgeSync(canonicalizeMarkdown, splitMarkdownBlocksForSync, {
+  splitTopLevel: splitTopLevelBlocksForSync,
+  canonicalizeObserving: canonicalizeMarkdownObserving,
+});
 
 function markUserEdit() {
   bridgeSync.recordUserEdit();
@@ -358,6 +368,36 @@ function canonicalizeMarkdown(markdown: string): string {
     const document = ctx.get(parserCtx)(markdown);
     return ctx.get(serializerCtx)(document);
   });
+}
+
+/** canonicalizeMarkdown, also reporting the input's top-level blocks from the same parse. */
+function canonicalizeMarkdownObserving(
+  markdown: string,
+  knownKey?: KnownBlockKey,
+): { canonical: string; blocks: TopLevelBlock[] | undefined } {
+  if (!crepe || creatingEditor) {
+    throw new Error("The Milkdown parser is not ready");
+  }
+  return crepe.editor.action((ctx) => {
+    const { result, blocks } = parseObservingBlocks(
+      ctx.get(remarkCtx),
+      markdown,
+      ctx.get(parserCtx),
+      knownKey,
+    );
+    return { canonical: ctx.get(serializerCtx)(result), blocks };
+  });
+}
+
+function splitTopLevelBlocksForSync(markdown: string): TopLevelBlock[] | undefined {
+  if (!crepe || creatingEditor) {
+    return undefined;
+  }
+  try {
+    return crepe.editor.action((ctx) => splitTopLevelBlocks(ctx.get(remarkCtx), markdown));
+  } catch {
+    return undefined;
+  }
 }
 
 /** Splits with the editor's own remark processor, so blocks carry the syntax Crepe itself parses. */

@@ -5,7 +5,14 @@ import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { TextSelection } from "@milkdown/kit/prose/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
+import { type MarkdownStructure, SourceBlockIndex } from "./block-index";
+import {
+  type MarkdownBlock,
+  type MarkdownBlockSplitter,
+  parseObservingBlocks,
+  splitMarkdownBlocks,
+  splitTopLevelBlocks,
+} from "./markdown-blocks";
 import { mergeSourcePreservingEdit } from "./source-preserving-sync";
 import {
   buildCleanDoc,
@@ -54,6 +61,26 @@ describe("source-preserving merge with the Milkdown parser", () => {
     return splitMarkdownBlocks(editor.ctx.get(remarkCtx), markdown);
   }
 
+  const structure: MarkdownStructure = {
+    splitTopLevel: (markdown) => splitTopLevelBlocks(editor.ctx.get(remarkCtx), markdown),
+    canonicalizeObserving: (markdown, knownKey) => editor.action((ctx) => {
+      const { result, blocks } = parseObservingBlocks(ctx.get(remarkCtx), markdown, ctx.get(parserCtx), knownKey);
+      return { canonical: ctx.get(serializerCtx)(result), blocks };
+    }),
+  };
+
+  /** The merge exactly as the bridge runs it: with the byte-exact guard over a fresh block index. */
+  function merge(
+    source: string,
+    edited: string,
+    canonicalizer: (markdown: string) => string,
+    knownCanonicalSource?: string,
+    splitter?: MarkdownBlockSplitter,
+    blockIndex = new SourceBlockIndex(structure),
+  ) {
+    return mergeSourcePreservingEdit(source, edited, canonicalizer, knownCanonicalSource, splitter, blockIndex);
+  }
+
   it("preserves real YAML frontmatter while editing body prose", () => {
     const source = `---
 title: MilkJ
@@ -76,7 +103,7 @@ Edit this sentence[^note].
     const editedCanonical = canonicalize(source)
       .replace(" exactly.", " completely unchanged.");
 
-    const result = mergeSourcePreservingEdit(source, editedCanonical, canonicalize);
+    const result = merge(source, editedCanonical, canonicalize);
 
     expect(result).toEqual({
       ok: true,
@@ -99,7 +126,7 @@ Edit this paragraph.
     const editedCanonical = canonicalize(source)
       .replace("Edit this paragraph.", "This paragraph was edited.");
 
-    const result = mergeSourcePreservingEdit(source, editedCanonical, canonicalize);
+    const result = merge(source, editedCanonical, canonicalize);
 
     expect(result).toEqual({
       ok: true,
@@ -132,7 +159,7 @@ Edit this sentence far below the table.
     expect(canonical.indexOf("## Steps") - source.indexOf("## Steps")).toBeGreaterThan(1000);
 
     const edited = canonical.replace("far below the table", "way below the table");
-    const result = mergeSourcePreservingEdit(source, edited, canonicalize);
+    const result = merge(source, edited, canonicalize);
 
     expect(result).toEqual({
       ok: true,
@@ -166,7 +193,7 @@ Trailing paragraph.
     // Re-canonicalize so the remaining rows re-pad, exactly as the editor serializes a deletion.
     const edited = canonicalize(canonical.replace(deletedRow, ""));
 
-    const result = mergeSourcePreservingEdit(source, edited, canonicalize);
+    const result = merge(source, edited, canonicalize);
 
     // The edited table takes the editor's (padded) form; untouched blocks keep source formatting.
     expect(result).toEqual({
@@ -191,7 +218,7 @@ Trailing paragraph.
     });
     expect(serialized).toBe("Hello there \n\nWorld\n");
 
-    const result = mergeSourcePreservingEdit(source, serialized, canonicalize);
+    const result = merge(source, serialized, canonicalize);
 
     expect(result).toEqual({ ok: true, markdown: "Hello there \n\nWorld\n" });
   });
@@ -216,6 +243,21 @@ Trailing paragraph.
     });
   });
 
+  it("rejects a stale baseline under the byte-exact guard instead of guessing its regions", () => {
+    // The guard derives the regions an edit may rewrite from the baseline → edited diff, which here
+    // also holds the IDE's inserted paragraph: a change the source already has, next to no source
+    // gap of its own. The bridge never merges against a stale baseline (every IDE push drops it),
+    // so refusing costs nothing there.
+    const source = "# Notes\n\nKeep __this__ line.\n\nInserted by the IDE.\n\nSecond paragraph.\n";
+    const edited = canonicalize(source).replace("Second paragraph.", "Second paragraph, edited.");
+    const staleBaseline = canonicalize("# Notes\n\nKeep __this__ line.\n\nSecond paragraph.\n");
+
+    expect(merge(source, edited, canonicalize, staleBaseline, split)).toEqual({
+      ok: false,
+      reason: "MilkJ could not tell which part of the Markdown the rich-text change edited.",
+    });
+  });
+
   it("keeps the source bullets a block-aligned merge did not touch", () => {
     const source = `# Steps
 
@@ -228,7 +270,7 @@ Trailing paragraph.
 
     // Same stale baseline, this time inside a list: the untouched bullets keep their source bytes
     // and their tight spacing instead of the whole list taking the editor's formatting.
-    const result = mergeSourcePreservingEdit(
+    const result = merge(
       source,
       edited,
       canonicalize,
@@ -247,8 +289,8 @@ Trailing paragraph.
     const staleBaseline = canonicalize("# Steps\n\n- one\n- two\n- three\n");
     const edited = canonicalize(canonicalize(source).replace("* two\n\n", ""));
 
-    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline).ok).toBe(false);
-    expect(mergeSourcePreservingEdit(source, edited, canonicalize, staleBaseline, split)).toEqual({
+    expect(merge(source, edited, canonicalize, staleBaseline).ok).toBe(false);
+    expect(merge(source, edited, canonicalize, staleBaseline, split)).toEqual({
       ok: true,
       markdown: "# Steps\n\n- one\n- inserted by the IDE\n- three\n",
     });
@@ -265,7 +307,7 @@ Body text.
 `;
     const edited = canonicalize(source).replace("title: MilkJ", "title: Changed in rich text");
 
-    expect(mergeSourcePreservingEdit(source, edited, canonicalize, undefined, split)).toEqual({
+    expect(merge(source, edited, canonicalize, undefined, split)).toEqual({
       ok: false,
       reason: "The rich-text change would modify the document frontmatter.",
     });
@@ -275,7 +317,7 @@ Body text.
     const source = "# Heading\n\nKeep __this__ text.\n";
     const edited = canonicalize(source).replace("text", "prose");
 
-    expect(mergeSourcePreservingEdit(source, edited, canonicalize, undefined, () => undefined))
+    expect(merge(source, edited, canonicalize, undefined, () => undefined))
       .toEqual({ ok: true, markdown: "# Heading\n\nKeep __this__ prose.\n" });
   });
 
@@ -288,7 +330,7 @@ Body text.
     /** One marker edit exactly as the bridge sees it: the editor holds the edited document's canonical form. */
     function mergeMarkerEdit(source: string, edit: MarkerEdit) {
       const edited = canonicalize(source.replace(edit.from, edit.to));
-      return mergeSourcePreservingEdit(source, edited, canonicalize, undefined, split);
+      return merge(source, edited, canonicalize, undefined, split);
     }
 
     it.fails("keeps a drifted 50 KB document intact around an edited table cell", () => {

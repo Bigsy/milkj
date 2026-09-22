@@ -1,3 +1,4 @@
+import { type MarkdownStructure, SourceBlockIndex } from "./block-index";
 import type { MarkdownBlockSplitter } from "./markdown-blocks";
 import type { PageMessageOf } from "./protocol";
 import {
@@ -16,11 +17,15 @@ export class EditorBridgeSync {
   private userEdited = false;
   private sourceMarkdown = "";
   private canonicalSource: string | undefined;
+  private readonly blockIndex: SourceBlockIndex | undefined;
 
   constructor(
     private readonly canonicalize: MarkdownCanonicalizer = (markdown) => markdown,
     private readonly splitBlocks?: MarkdownBlockSplitter,
-  ) {}
+    structure?: MarkdownStructure,
+  ) {
+    this.blockIndex = structure && new SourceBlockIndex(structure);
+  }
 
   /**
    * Accepts a push from the IDE. Returns true when the pushed text is exactly the source this page
@@ -71,6 +76,7 @@ export class EditorBridgeSync {
       this.canonicalize,
       this.canonicalSource,
       this.splitBlocks,
+      this.blockIndex,
     );
     if (!merged.ok) {
       return {

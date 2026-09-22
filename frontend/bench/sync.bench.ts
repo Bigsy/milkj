@@ -9,7 +9,13 @@ import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import DiffMatchPatch from "diff-match-patch";
 import { afterAll, beforeAll, describe, it } from "vitest";
-import { type MarkdownBlock, splitMarkdownBlocks } from "../src/markdown-blocks";
+import { EditRegions, type MarkdownStructure, SourceBlockIndex } from "../src/block-index";
+import {
+  type MarkdownBlock,
+  parseObservingBlocks,
+  splitMarkdownBlocks,
+  splitTopLevelBlocks,
+} from "../src/markdown-blocks";
 import { mergeSourcePreservingEdit } from "../src/source-preserving-sync";
 import {
   buildCleanDoc,
@@ -61,11 +67,16 @@ const canonicalizeRaw = (markdown: string) => serialize(parse(markdown));
 
 // Instrumented wrappers, reset before every measured merge.
 let canonTime = 0, canonCalls = 0, canonMax = 0, splitTime = 0, splitCalls = 0;
-function canonicalize(markdown: string): string {
+let guardTime = 0, topSplitTime = 0, topSplitCalls = 0;
+function resetCounters() {
+  canonTime = 0; canonCalls = 0; canonMax = 0; splitTime = 0; splitCalls = 0;
+  guardTime = 0; topSplitTime = 0; topSplitCalls = 0;
+}
+function countCanonicalize<T>(fn: () => T): T {
   step("canonicalize");
   const start = performance.now();
   try {
-    return canonicalizeRaw(markdown);
+    return fn();
   } finally {
     const elapsed = performance.now() - start;
     canonTime += elapsed;
@@ -74,6 +85,45 @@ function canonicalize(markdown: string): string {
     step("merge strategy");
   }
 }
+function canonicalize(markdown: string): string {
+  return countCanonicalize(() => canonicalizeRaw(markdown));
+}
+
+const structure: MarkdownStructure = {
+  splitTopLevel(markdown) {
+    step("top-level split");
+    const start = performance.now();
+    try {
+      return splitTopLevelBlocks(editor.ctx.get(remarkCtx), markdown);
+    } finally {
+      topSplitTime += performance.now() - start;
+      topSplitCalls++;
+      step("guard");
+    }
+  },
+  canonicalizeObserving: (markdown, knownKey) => countCanonicalize(() => editor.action((ctx) => {
+    const { result, blocks } = parseObservingBlocks(ctx.get(remarkCtx), markdown, ctx.get(parserCtx), knownKey);
+    return { canonical: ctx.get(serializerCtx)(result), blocks };
+  })),
+};
+
+// Time the guard's own work: deriving regions, checking candidates and re-indexing accepted ones.
+function timeGuard<T extends object>(prototype: T, method: keyof T) {
+  const original = prototype[method] as (...args: unknown[]) => unknown;
+  (prototype as Record<keyof T, unknown>)[method] = function (this: unknown, ...args: unknown[]) {
+    const start = performance.now();
+    const canonBefore = canonTime;
+    try {
+      return original.apply(this, args);
+    } finally {
+      // canonicalizeObserving runs inside EditRegions.canonicalize and is canonicalize time.
+      guardTime += performance.now() - start - (canonTime - canonBefore);
+    }
+  };
+}
+timeGuard(SourceBlockIndex.prototype, "prepare");
+timeGuard(EditRegions.prototype, "check");
+timeGuard(EditRegions.prototype, "accept");
 function split(markdown: string): MarkdownBlock | undefined {
   step("splitBlocks");
   const start = performance.now();
@@ -161,6 +211,71 @@ function measureListenerSerialization(label: string, source: string, edit: Marke
 type Prepared = { source: string; lines: number; canonicalBefore?: string; skip?: string };
 const prepared = new Map<string, Prepared>();
 
+/**
+ * cold: the first edit after an IDE push, with nothing known about the source.
+ * warm: canonical form and block index of the source already known.
+ * chained: the next keystroke after an accepted edit, with everything the accepted merge left
+ *   behind — the steady state while typing.
+ */
+const MODES = ["cold", "warm", "chained"] as const;
+type Mode = (typeof MODES)[number];
+
+interface Case {
+  source: string;
+  canonicalBefore: string;
+  knownCanonical: string | undefined;
+  edited: string;
+  /** A fresh block index in the state this mode starts from. */
+  index: () => SourceBlockIndex;
+}
+
+function prepareCase(p: Prepared, edit: MarkerEdit, mode: Mode): Case | string {
+  p.canonicalBefore ??= canonicalizeRaw(p.source);
+  const editedSource = p.source.replace(edit.from, edit.to);
+  if (editedSource === p.source) {
+    return "marker missing";
+  }
+  const edited = canonicalizeRaw(editedSource);
+  if (mode === "cold") {
+    return {
+      source: p.source,
+      canonicalBefore: p.canonicalBefore,
+      knownCanonical: undefined,
+      edited,
+      index: () => new SourceBlockIndex(structure),
+    };
+  }
+  const sourceIndex = { text: p.source, blocks: structure.splitTopLevel(p.source)! };
+  const canonicalIndex = { text: p.canonicalBefore, blocks: structure.splitTopLevel(p.canonicalBefore)! };
+  const primed = () => {
+    const index = new SourceBlockIndex(structure);
+    index.accept(sourceIndex, canonicalIndex);
+    return index;
+  };
+  if (mode === "warm") {
+    return { source: p.source, canonicalBefore: p.canonicalBefore, knownCanonical: p.canonicalBefore, edited, index: primed };
+  }
+  // Accept the marker edit, then time typing one more character right after it.
+  const first = primed();
+  const accepted = mergeSourcePreservingEdit(p.source, edited, canonicalizeRaw, p.canonicalBefore, split, first);
+  if (!accepted.ok) {
+    return `first edit of the chain failed (${accepted.reason})`;
+  }
+  const after = first.indexed();
+  const next = canonicalizeRaw(edited.replace(edit.to, `${edit.to}y`));
+  return {
+    source: accepted.markdown,
+    canonicalBefore: edited,
+    knownCanonical: edited,
+    edited: next,
+    index: () => {
+      const index = new SourceBlockIndex(structure);
+      index.accept(after.source, after.canonical);
+      return index;
+    },
+  };
+}
+
 for (const [label, bytes] of SIZES) {
   describe(label, () => {
     it(`prepare ${label}`, () => {
@@ -203,7 +318,7 @@ for (const [label, bytes] of SIZES) {
 
     for (const doc of ["clean", "drift"] as const) {
       for (const [editName, edit] of EDITS) {
-        for (const mode of ["cold", "warm"] as const) {
+        for (const mode of MODES) {
           const name = `${doc} | ${label} | ${editName} | ${mode}`;
           it(name, () => {
             currentCase = name;
@@ -213,29 +328,22 @@ for (const [label, bytes] of SIZES) {
               return;
             }
             const caseStart = performance.now();
-            step("prepare case: canonicalize before");
-            const before = timed(() => p.canonicalBefore ?? canonicalizeRaw(p.source));
-            p.canonicalBefore = before.value;
-            const editedSource = p.source.replace(edit.from, edit.to);
-            if (editedSource === p.source) {
-              result(`${name} | marker missing`);
+            step("prepare case");
+            const setup = timed(() => prepareCase(p, edit, mode));
+            if (typeof setup.value === "string") {
+              result(`${name} | ${setup.value}`);
               return;
             }
-            step("prepare case: canonicalize edited");
-            const editedTimed = timed(() => canonicalizeRaw(editedSource));
-            if (before.ms > CALL_CAP_MS || editedTimed.ms > CALL_CAP_MS) {
-              result(
-                `${name} | >10 s in canonicalize (setup: before ${before.ms.toFixed(0)} ms, ` +
-                `edited ${editedTimed.ms.toFixed(0)} ms)`,
-              );
+            if (setup.ms > CASE_CAP_MS / 2) {
+              result(`${name} | setup took ${(setup.ms / 1000).toFixed(1)} s, skipping`);
               return;
             }
-            const edited = editedTimed.value;
-            const patchWinner = patchCandidate(p.source, p.canonicalBefore, edited);
-            const runs = p.source.length >= 1_000_000 ? 3 : 5;
+            const c = setup.value;
+            const patchWinner = patchCandidate(c.source, c.canonicalBefore, c.edited);
+            const runs = c.source.length >= 1_000_000 ? 3 : 5;
             type Run = {
-              ms: number; canonMs: number; canonN: number; canonMax: number;
-              splitMs: number; splitN: number; winner: string;
+              ms: number; canonMs: number; canonN: number; canonMax: number; splitMs: number;
+              splitN: number; guardMs: number; topSplitMs: number; topSplitN: number; winner: string;
             };
             const measured: Run[] = [];
             let capNote = "";
@@ -244,22 +352,25 @@ for (const [label, bytes] of SIZES) {
                 capNote = ` | >60 s case cap hit after ${measured.length} measured runs`;
                 break;
               }
-              canonTime = 0; canonCalls = 0; canonMax = 0; splitTime = 0; splitCalls = 0;
+              const index = c.index();
+              resetCounters();
               step("mergeSourcePreservingEdit");
               const { value: merged, ms } = timed(() => mergeSourcePreservingEdit(
-                p.source,
-                edited,
+                c.source,
+                c.edited,
                 canonicalize,
-                mode === "warm" ? p.canonicalBefore : undefined,
+                c.knownCanonical,
                 split,
+                index,
               ));
               const overCap = ms > CALL_CAP_MS;
               // The first run warms the JIT and is discarded unless it is the only one that fits.
               if (r > 0 || overCap) {
                 measured.push({
-                  ms, canonMs: canonTime, canonN: canonCalls, canonMax, splitMs: splitTime, splitN: splitCalls,
+                  ms, canonMs: canonTime, canonN: canonCalls, canonMax, splitMs: splitTime,
+                  splitN: splitCalls, guardMs: guardTime, topSplitMs: topSplitTime, topSplitN: topSplitCalls,
                   winner: !merged.ok
-                    ? "FAILED"
+                    ? `FAILED (${merged.reason})`
                     : merged.markdown === patchWinner ? "patch" : splitCalls > 0 ? "block" : "line",
                 });
               }
@@ -277,8 +388,10 @@ for (const [label, bytes] of SIZES) {
             result(
               `${name} | ${p.lines} lines | median ${run.ms.toFixed(0)} ms (n=${measured.length}) | ` +
               `canon ${run.canonMs.toFixed(0)} ms in ${run.canonN} calls (max ${run.canonMax.toFixed(0)}) | ` +
-              `split ${run.splitMs.toFixed(0)} ms in ${run.splitN} | ` +
-              `other ${(run.ms - run.canonMs - run.splitMs).toFixed(0)} ms | ${run.winner}${capNote}`,
+              `guard ${run.guardMs.toFixed(1)} ms (top-level splits ${run.topSplitMs.toFixed(0)} ms in ` +
+              `${run.topSplitN}) | block split ${run.splitMs.toFixed(0)} ms in ${run.splitN} | ` +
+              `other ${(run.ms - run.canonMs - run.guardMs - run.splitMs).toFixed(0)} ms | ` +
+              `${run.winner}${capNote}`,
             );
           });
         }

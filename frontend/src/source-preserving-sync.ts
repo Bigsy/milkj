@@ -1,6 +1,7 @@
 import DiffMatchPatch from "diff-match-patch";
 import { mergeEditByBlocks } from "./block-merge";
-import type { MarkdownBlockSplitter } from "./markdown-blocks";
+import type { EditRegions, SourceBlockIndex } from "./block-index";
+import type { MarkdownBlockSplitter, TopLevelBlock } from "./markdown-blocks";
 
 export type MarkdownCanonicalizer = (markdown: string) => string;
 
@@ -17,6 +18,12 @@ export type SourceMergeResult =
  * only the edit applied, and trust no reconstruction until it is proven equivalent to the editor's
  * document by parsing and serializing it through the active Milkdown schema. Several strategies
  * produce a candidate; the first one that proves equivalent wins.
+ *
+ * Equivalence cannot see what Crepe normalizes away — list tightness, emphasis and bullet markers,
+ * escapes, table padding — so a candidate that rewrote untouched source in one of those ways would
+ * pass it. With a `blockIndex`, every candidate must also keep the source byte for byte outside the
+ * top-level blocks the edit touched, as derived from the canonical texts rather than from whichever
+ * strategy produced the candidate.
  */
 export function mergeSourcePreservingEdit(
   sourceMarkdown: string,
@@ -24,13 +31,16 @@ export function mergeSourcePreservingEdit(
   canonicalize: MarkdownCanonicalizer,
   knownCanonicalSource?: string,
   splitBlocks?: MarkdownBlockSplitter,
+  blockIndex?: SourceBlockIndex,
 ): SourceMergeResult {
   let canonicalBefore: string;
   if (knownCanonicalSource !== undefined) {
     canonicalBefore = knownCanonicalSource;
   } else {
     try {
-      canonicalBefore = canonicalize(sourceMarkdown);
+      canonicalBefore = blockIndex
+        ? blockIndex.canonicalizeSource(sourceMarkdown)
+        : canonicalize(sourceMarkdown);
     } catch {
       return failure("MilkJ could not parse the original Markdown safely.");
     }
@@ -38,6 +48,15 @@ export function mergeSourcePreservingEdit(
 
   if (canonicalBefore === editedCanonicalMarkdown) {
     return { ok: true, markdown: sourceMarkdown };
+  }
+
+  let regions: EditRegions | undefined;
+  if (blockIndex) {
+    const prepared = blockIndex.prepare(sourceMarkdown, canonicalBefore, editedCanonicalMarkdown);
+    if (typeof prepared === "string") {
+      return failure(prepared);
+    }
+    regions = prepared;
   }
 
   const dmp = new DiffMatchPatch();
@@ -108,9 +127,20 @@ export function mergeSourcePreservingEdit(
       continue;
     }
 
+    const kept = regions?.check(candidate);
+    if (regions && !kept) {
+      reason = "The rich-text change would rewrite Markdown outside the blocks it edited.";
+      continue;
+    }
+
     let canonicalCandidate: string;
+    let candidateBlocks: TopLevelBlock[] | undefined;
     try {
-      canonicalCandidate = canonicalize(candidate);
+      if (regions && kept) {
+        ({ canonical: canonicalCandidate, blocks: candidateBlocks } = regions.canonicalize(candidate, kept));
+      } else {
+        canonicalCandidate = canonicalize(candidate);
+      }
     } catch {
       reason = "The merged Markdown could not be parsed safely.";
       continue;
@@ -134,6 +164,7 @@ export function mergeSourcePreservingEdit(
       }
     }
 
+    regions?.accept(candidate, candidateBlocks);
     return { ok: true, markdown: candidate };
   }
 
