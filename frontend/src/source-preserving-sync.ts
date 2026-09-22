@@ -157,6 +157,7 @@ function mergeEditByLines(
 ): string {
   const toSource = lineDiff(dmp, canonicalBefore, sourceMarkdown);
   const toEdited = lineDiff(dmp, canonicalBefore, editedCanonicalMarkdown);
+  const canonicalLines = splitKeepingNewlines(canonicalBefore);
 
   // For every canonical line: the source text of the run it belongs to, or its own text when it
   // maps to source 1:1. Source-only lines (no canonical counterpart) anchor before a canonical
@@ -244,28 +245,11 @@ function mergeEditByLines(
         result += insertedAt.get(i) ?? "";
       }
       if (lineKept[i]) {
-        result += canonicalLineAt(toSource, i);
+        result += canonicalLines[i] ?? "";
       }
     }
   }
   return result;
-}
-
-/** The canonical-before text's line at the given index, recovered from the line diff. */
-function canonicalLineAt(toSource: Array<[number, string]>, target: number): string {
-  let index = 0;
-  for (const [operation, text] of toSource) {
-    if (operation === 1) {
-      continue;
-    }
-    for (const line of splitKeepingNewlines(text)) {
-      if (index === target) {
-        return line;
-      }
-      index++;
-    }
-  }
-  return "";
 }
 
 function splitKeepingNewlines(text: string): string[] {
