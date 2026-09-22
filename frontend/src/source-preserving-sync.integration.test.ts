@@ -296,6 +296,21 @@ Trailing paragraph.
     });
   });
 
+  it("merges only the body of a document that opens with frontmatter", () => {
+    // Only the block merge can place this edit (the baseline is stale inside the list), and over
+    // the whole document it would also align the frontmatter's tight list against Crepe's loose
+    // rendering of it. Merging the body alone leaves the frontmatter bytes to the source.
+    const frontmatter = "---\ntitle: Steps\ntags:\n  - a\n  - b\n---\n\n";
+    const source = `${frontmatter}# Steps\n\n- one\n- inserted by the IDE\n- two\n- three\n`;
+    const edited = canonicalize(source).replace("* three", "* three, edited");
+    const staleBaseline = canonicalize(`${frontmatter}# Steps\n\n- one\n- two\n- three\n`);
+
+    expect(merge(source, edited, canonicalize, staleBaseline, split)).toEqual({
+      ok: true,
+      markdown: source.replace("- three", "- three, edited"),
+    });
+  });
+
   it("still refuses to touch frontmatter when the block merge produces the candidate", () => {
     const source = `---
 title: MilkJ

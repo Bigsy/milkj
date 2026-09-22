@@ -128,7 +128,7 @@ export class EditRegions {
   private constructor(
     private readonly owner: SourceBlockIndex,
     readonly source: BlockIndex,
-    private readonly canonical: BlockIndex,
+    readonly canonical: BlockIndex,
     private readonly edited: string,
     private readonly changes: TextChange[],
     /** Sorted, disjoint source regions. */

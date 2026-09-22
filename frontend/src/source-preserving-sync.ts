@@ -60,59 +60,21 @@ export function mergeSourcePreservingEdit(
     regions = prepared;
   }
 
-  const dmp = new DiffMatchPatch();
-  // Keep pathological documents from tying up JCEF indefinitely. A timed-out diff still produces
-  // a valid coarse patch, which must pass the canonical-equivalence check below before it is used.
-  dmp.Diff_Timeout = 0.1;
-  const patches = dmp.patch_make(canonicalBefore, editedCanonicalMarkdown);
-  // patch_apply locates each hunk by fuzzy-matching near its recorded position, and its search
-  // radius only spans a few hundred characters. The recorded positions are canonical-text
-  // coordinates, but the text being patched is the original source, whose formatting can drift far
-  // beyond that radius — one table whose cells the serializer pads to the widest column shifts
-  // everything below it by thousands of characters. Translate each hunk's position into source
-  // coordinates first. The normalized alignment survives formatting drift; a plain diff of the two
-  // texts is only the bounded fallback for documents that differ by more than formatting.
-  const alignment = alignSource(dmp, canonicalBefore, sourceMarkdown);
-  const coordinateDiffs = alignment?.characters ?? dmp.diff_main(canonicalBefore, sourceMarkdown);
-  // @types/diff-match-patch mistypes patch_make's elements as the patch_obj constructor.
-  for (const patch of patches as unknown as Array<{ start1: number | null; start2: number | null }>) {
-    if (patch.start1 !== null) {
-      patch.start1 = dmp.diff_xIndex(coordinateDiffs, patch.start1);
-    }
-    if (patch.start2 !== null) {
-      patch.start2 = dmp.diff_xIndex(coordinateDiffs, patch.start2);
-    }
-  }
-  const [patchedCandidate, applied] = dmp.patch_apply(patches, sourceMarkdown);
-
-  // Candidates are produced lazily and in increasing blast radius: a later one only runs when
-  // every earlier one failed the equivalence check below.
-  const rawCandidates: Array<() => string | undefined> = [];
-  if (!applied.some((didApply) => !didApply)) {
-    rawCandidates.push(() => patchedCandidate);
-  }
-  // Fuzzy patching cannot handle an edit INSIDE a heavily normalized region: the hunk's own text
-  // is canonical (a table row padded to the widest column, say) and does not exist in the source
-  // in that form, no matter where the matcher looks. Fall back to a line-granular merge: regions
-  // the edit did not touch keep their source lines byte-for-byte, regions it did touch take the
-  // editor's lines verbatim. The equivalence check below vets either candidate before it is
-  // trusted.
-  rawCandidates.push(() =>
-    mergeEditByLines(
-      dmp,
-      canonicalBefore,
-      editedCanonicalMarkdown,
-      alignment?.lines ?? lineDiff(dmp, canonicalBefore, sourceMarkdown),
-    )
-  );
-  // Last resort: align the two documents by parsed block instead of by text. It is the only
-  // strategy that cannot mistake where an edit landed, but it rewrites a whole edited block (or
-  // list item) in the editor's formatting, so the line merge gets first refusal.
-  if (splitBlocks) {
-    rawCandidates.push(() =>
-      mergeEditByBlocks(dmp, sourceMarkdown, editedCanonicalMarkdown, splitBlocks, canonicalize)
-    );
-  }
+  // Frontmatter is opaque to Crepe, which renders it as a thematic break and paragraphs; merged
+  // with the body, that rendering drifts from the source's first line. Merge only the body, and
+  // re-attach the source's own frontmatter bytes.
+  const body = regions && frontmatterBodyStart(regions, editedCanonicalMarkdown);
+  const prefix = body ? sourceMarkdown.slice(0, body.source) : "";
+  const rawCandidates = candidateStrategies(
+    body ? sourceMarkdown.slice(body.source) : sourceMarkdown,
+    body ? canonicalBefore.slice(body.canonical) : canonicalBefore,
+    body ? editedCanonicalMarkdown.slice(body.canonical) : editedCanonicalMarkdown,
+    canonicalize,
+    splitBlocks,
+  ).map((produce) => () => {
+    const candidate = produce();
+    return candidate === undefined ? undefined : prefix + candidate;
+  });
 
   let canonicalEdited: string | undefined;
   let reason = "MilkJ could not map the rich-text change onto the original Markdown.";
@@ -177,6 +139,71 @@ export function mergeSourcePreservingEdit(
   }
 
   return failure(reason);
+}
+
+/**
+ * The merge strategies, lazily and in increasing blast radius: a later one only runs when every
+ * earlier one's candidate failed the caller's checks.
+ */
+function candidateStrategies(
+  sourceMarkdown: string,
+  canonicalBefore: string,
+  editedCanonicalMarkdown: string,
+  canonicalize: MarkdownCanonicalizer,
+  splitBlocks: MarkdownBlockSplitter | undefined,
+): Array<() => string | undefined> {
+  const dmp = new DiffMatchPatch();
+  // Keep pathological documents from tying up JCEF indefinitely. A timed-out diff still produces
+  // a valid coarse patch, which must pass the canonical-equivalence check by the caller before it is used.
+  dmp.Diff_Timeout = 0.1;
+  const patches = dmp.patch_make(canonicalBefore, editedCanonicalMarkdown);
+  // patch_apply locates each hunk by fuzzy-matching near its recorded position, and its search
+  // radius only spans a few hundred characters. The recorded positions are canonical-text
+  // coordinates, but the text being patched is the original source, whose formatting can drift far
+  // beyond that radius — one table whose cells the serializer pads to the widest column shifts
+  // everything below it by thousands of characters. Translate each hunk's position into source
+  // coordinates first. The normalized alignment survives formatting drift; a plain diff of the two
+  // texts is only the bounded fallback for documents that differ by more than formatting.
+  const alignment = alignSource(dmp, canonicalBefore, sourceMarkdown);
+  const coordinateDiffs = alignment?.characters ?? dmp.diff_main(canonicalBefore, sourceMarkdown);
+  // @types/diff-match-patch mistypes patch_make's elements as the patch_obj constructor.
+  for (const patch of patches as unknown as Array<{ start1: number | null; start2: number | null }>) {
+    if (patch.start1 !== null) {
+      patch.start1 = dmp.diff_xIndex(coordinateDiffs, patch.start1);
+    }
+    if (patch.start2 !== null) {
+      patch.start2 = dmp.diff_xIndex(coordinateDiffs, patch.start2);
+    }
+  }
+  const [patchedCandidate, applied] = dmp.patch_apply(patches, sourceMarkdown);
+
+  const rawCandidates: Array<() => string | undefined> = [];
+  if (!applied.some((didApply) => !didApply)) {
+    rawCandidates.push(() => patchedCandidate);
+  }
+  // Fuzzy patching cannot handle an edit INSIDE a heavily normalized region: the hunk's own text
+  // is canonical (a table row padded to the widest column, say) and does not exist in the source
+  // in that form, no matter where the matcher looks. Fall back to a line-granular merge: regions
+  // the edit did not touch keep their source lines byte-for-byte, regions it did touch take the
+  // editor's lines verbatim. The equivalence check vets either candidate before it is
+  // trusted.
+  rawCandidates.push(() =>
+    mergeEditByLines(
+      dmp,
+      canonicalBefore,
+      editedCanonicalMarkdown,
+      alignment?.lines ?? lineDiff(dmp, canonicalBefore, sourceMarkdown),
+    )
+  );
+  // Last resort: align the two documents by parsed block instead of by text. It is the only
+  // strategy that cannot mistake where an edit landed, but it rewrites a whole edited block (or
+  // list item) in the editor's formatting, so the line merge gets first refusal.
+  if (splitBlocks) {
+    rawCandidates.push(() =>
+      mergeEditByBlocks(dmp, sourceMarkdown, editedCanonicalMarkdown, splitBlocks, canonicalize)
+    );
+  }
+  return rawCandidates;
 }
 
 /**
@@ -311,6 +338,41 @@ function preserveSourceLineEndings(source: string, candidate: string): string {
 
 function failure(reason: string): SourceMergeResult {
   return { ok: false, reason };
+}
+
+/**
+ * Where the body begins in the source and in the canonical texts when the source opens with
+ * frontmatter, located by blocks rather than by string matching: the frontmatter must end exactly
+ * where a source block does, its blocks must be the canonical text's first blocks key for key, and
+ * the edited text must still open with that same rendering. Undefined otherwise, which leaves the
+ * frontmatter in the merge, guarded by leadingFrontmatterWasPreserved.
+ */
+function frontmatterBodyStart(
+  regions: EditRegions,
+  edited: string,
+): { source: number; canonical: number } | undefined {
+  const frontmatter = leadingFrontmatter(regions.source.text);
+  if (frontmatter === undefined) {
+    return undefined;
+  }
+  const sourceBlocks = regions.source.blocks;
+  const canonicalBlocks = regions.canonical.blocks;
+  let count = 0;
+  while (count < sourceBlocks.length && sourceBlocks[count].end <= frontmatter.length) {
+    count++;
+  }
+  const straddles = count < sourceBlocks.length && sourceBlocks[count].start < frontmatter.length;
+  if (count === 0 || count > canonicalBlocks.length || straddles) {
+    return undefined;
+  }
+  for (let i = 0; i < count; i++) {
+    if (sourceBlocks[i].key !== canonicalBlocks[i].key) {
+      return undefined;
+    }
+  }
+  const source = sourceBlocks[count]?.start ?? regions.source.text.length;
+  const canonical = canonicalBlocks[count]?.start ?? regions.canonical.text.length;
+  return edited.startsWith(regions.canonical.text.slice(0, canonical)) ? { source, canonical } : undefined;
 }
 
 /** Frontmatter is opaque to Crepe, so never allow a fuzzy patch to alter it. */
