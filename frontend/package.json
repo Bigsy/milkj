@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "bench:sync": "vitest run --config bench/vitest.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

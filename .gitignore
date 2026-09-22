@@ -43,6 +43,7 @@ gen/
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/bench/out/
 .pnpm-store/
 # Built Milkdown bundle is generated into resources by the frontend build:
 src/main/resources/web/assets/

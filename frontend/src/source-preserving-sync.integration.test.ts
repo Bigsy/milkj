@@ -7,6 +7,25 @@ import { TextSelection } from "@milkdown/kit/prose/state";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { mergeSourcePreservingEdit } from "./source-preserving-sync";
+import {
+  buildCleanDoc,
+  buildDriftDoc,
+  MARKER_EDITS,
+  type MarkerEdit,
+} from "./test-support/large-markdown";
+
+/** Lines that differ between two texts, outside their common leading and trailing lines. */
+function changedLines(before: string, after: string): { removed: string[]; added: string[] } {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) {
+    tail++;
+  }
+  return { removed: a.slice(head, a.length - tail), added: b.slice(head, b.length - tail) };
+}
 
 describe("source-preserving merge with the Milkdown parser", () => {
   let editor: Editor;
@@ -258,5 +277,60 @@ Body text.
 
     expect(mergeSourcePreservingEdit(source, edited, canonicalize, undefined, () => undefined))
       .toEqual({ ok: true, markdown: "# Heading\n\nKeep __this__ prose.\n" });
+  });
+
+  describe("on large documents", () => {
+    // Each case parses a document of up to 200 KB several times.
+    const LARGE_TIMEOUT = 30_000;
+    const drift50k = buildDriftDoc(50_000);
+    const drift200k = buildDriftDoc(200_000);
+
+    /** One marker edit exactly as the bridge sees it: the editor holds the edited document's canonical form. */
+    function mergeMarkerEdit(source: string, edit: MarkerEdit) {
+      const edited = canonicalize(source.replace(edit.from, edit.to));
+      return mergeSourcePreservingEdit(source, edited, canonicalize, undefined, split);
+    }
+
+    it.fails("keeps a drifted 50 KB document intact around an edited table cell", () => {
+      const result = mergeMarkerEdit(drift50k, MARKER_EDITS.tableCell);
+
+      expect(result.ok).toBe(true);
+      const { removed, added } = changedLines(drift50k, result.ok ? result.markdown : "");
+      expect(removed).toHaveLength(1);
+      expect(removed[0]).toContain(MARKER_EDITS.tableCell.from);
+      expect(added).toHaveLength(1);
+      expect(added[0]).toContain(MARKER_EDITS.tableCell.to);
+    }, LARGE_TIMEOUT);
+
+    it.fails("inserts exactly the typed character into a drifted 200 KB document", () => {
+      const edit = MARKER_EDITS.middle;
+
+      const result = mergeMarkerEdit(drift200k, edit);
+
+      expect(result).toEqual({ ok: true, markdown: drift200k.replace(edit.from, edit.to) });
+    }, LARGE_TIMEOUT);
+
+    it("changes only the edited table row of a clean 50 KB document", () => {
+      const clean = buildCleanDoc(drift50k, canonicalize);
+      const edit = MARKER_EDITS.tableCell;
+
+      const result = mergeMarkerEdit(clean, edit);
+
+      const expected = buildCleanDoc(drift50k.replace(edit.from, edit.to), canonicalize);
+      expect(result).toEqual({ ok: true, markdown: expected });
+      const { removed, added } = changedLines(clean, expected);
+      expect(removed).toHaveLength(1);
+      expect(added).toHaveLength(1);
+      expect(added[0]).toContain(edit.to);
+    }, LARGE_TIMEOUT);
+
+    it("inserts exactly the typed character into a clean 200 KB document", () => {
+      const clean = buildCleanDoc(drift200k, canonicalize);
+      const edit = MARKER_EDITS.middle;
+
+      const result = mergeMarkerEdit(clean, edit);
+
+      expect(result).toEqual({ ok: true, markdown: clean.replace(edit.from, edit.to) });
+    }, LARGE_TIMEOUT);
   });
 });
