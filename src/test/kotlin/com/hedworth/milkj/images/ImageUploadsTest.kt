@@ -13,8 +13,8 @@ class ImageUploadsTest {
     private val noon = LocalDateTime.of(2026, 9, 2, 12, 30, 45)
 
     @Test
-    fun parsesAValidUpload() {
-        val request = ImageUploads.parse("req-1:my%20shot.png:image/png:$pngBase64").getOrThrow()
+    fun acceptsAValidUpload() {
+        val request = ImageUploads.validate("req-1", "my shot.png", "image/png", pngBase64).getOrThrow()
 
         assertEquals("req-1", request.requestId)
         assertEquals("my shot.png", request.fileName)
@@ -25,17 +25,18 @@ class ImageUploadsTest {
     @Test
     fun rejectsMalformedAndUnsupportedUploads() {
         val failures = mapOf(
-            "missing fields" to "req:shot.png:image/png",
-            "bad request id" to "bad id:shot.png:image/png:$pngBase64",
-            "unsupported mime" to "req:doc.pdf:application/pdf:$pngBase64",
-            "bad percent escape" to "req:%ZZ.png:image/png:$pngBase64",
-            "bad base64" to "req:shot.png:image/png:@@@",
-            "empty image" to "req:shot.png:image/png:",
-            "non-ascii" to "req:shot.png:image/png:${pngBase64}é",
-            "oversized" to "req:shot.png:image/png:${"A".repeat(ImageUploads.MAX_PAYLOAD_CHARS + 1)}",
+            "bad request id" to listOf("bad id", "shot.png", "image/png", pngBase64),
+            "unsupported mime" to listOf("req", "doc.pdf", "application/pdf", pngBase64),
+            "control characters in the name" to listOf("req", "shot\u0000.png", "image/png", pngBase64),
+            "oversized name" to listOf("req", "a".repeat(1025), "image/png", pngBase64),
+            "bad base64" to listOf("req", "shot.png", "image/png", "@@@"),
+            "non-base64 characters" to listOf("req", "shot.png", "image/png", "${pngBase64}é"),
+            "empty image" to listOf("req", "shot.png", "image/png", ""),
+            "oversized" to listOf("req", "shot.png", "image/png", "A".repeat(ImageUploads.MAX_BASE64_CHARS + 4)),
         )
-        failures.forEach { (label, payload) ->
-            val result = ImageUploads.parse(payload)
+        failures.forEach { (label, fields) ->
+            val (requestId, fileName, mimeType, base64) = fields
+            val result = ImageUploads.validate(requestId, fileName, mimeType, base64)
             assertTrue("$label must be rejected", result.isFailure)
             assertTrue("$label needs a user-facing reason", !result.exceptionOrNull()?.message.isNullOrBlank())
         }

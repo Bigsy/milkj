@@ -1,11 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ViewStateReporter, encodeViewStateMessage, normalizeViewState } from "./view-state";
+import { ViewStateReporter, normalizeViewState } from "./view-state";
 
 describe("view state protocol", () => {
-  it("encodes anchor and scroll offset as a colon-separated message", () => {
-    expect(encodeViewStateMessage({ anchor: 42, scrollTop: 1200 })).toBe("viewstate:42:1200");
-  });
-
   it("normalizes usable positions and rounds fractional scroll offsets", () => {
     expect(normalizeViewState(0, 0)).toEqual({ anchor: 0, scrollTop: 0 });
     expect(normalizeViewState(17, 380.6)).toEqual({ anchor: 17, scrollTop: 381 });
@@ -43,7 +39,7 @@ describe("ViewStateReporter", () => {
 
     vi.advanceTimersByTime(1);
     expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith("viewstate:2:20");
+    expect(send).toHaveBeenCalledWith({ type: "viewState", anchor: 2, scrollTop: 20 });
   });
 
   it("does not resend an unchanged state", () => {
@@ -59,7 +55,7 @@ describe("ViewStateReporter", () => {
     reporter.report({ anchor: 5, scrollTop: 8 });
     vi.advanceTimersByTime(50);
     expect(send).toHaveBeenCalledTimes(2);
-    expect(send).toHaveBeenLastCalledWith("viewstate:5:8");
+    expect(send).toHaveBeenLastCalledWith({ type: "viewState", anchor: 5, scrollTop: 8 });
   });
 
   it("flushes the pending state immediately on demand and drops it on dispose", () => {
@@ -68,7 +64,7 @@ describe("ViewStateReporter", () => {
 
     reporter.report({ anchor: 9, scrollTop: 90 });
     reporter.flush();
-    expect(send).toHaveBeenCalledWith("viewstate:9:90");
+    expect(send).toHaveBeenCalledWith({ type: "viewState", anchor: 9, scrollTop: 90 });
 
     reporter.report({ anchor: 10, scrollTop: 100 });
     reporter.dispose();

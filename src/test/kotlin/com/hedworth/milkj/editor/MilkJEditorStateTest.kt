@@ -35,11 +35,21 @@ class MilkJEditorStateTest : BasePlatformTestCase() {
         assertTrue("a foreign state writes nothing", untouched.attributes.isEmpty())
     }
 
-    fun testParseAcceptsOnlyTwoNonNegativeIntegers() {
-        assertEquals(MilkJEditorState(0, 0), MilkJEditorState.parse("0:0"))
-        assertEquals(MilkJEditorState(7, 900), MilkJEditorState.parse("7:900"))
-        listOf("", "7", "7:", ":9", "-1:0", "0:-1", "1:2:3", "1.0:2", "a:b", " 1:2").forEach {
-            assertNull("'$it' must be rejected", MilkJEditorState.parse(it))
+    fun testWorkspaceStateAcceptsOnlyTwoNonNegativeIntegers() {
+        val file = myFixture.configureByText("notes.md", "# Notes\n").virtualFile
+        fun read(anchor: String, scrollTop: String) = provider.readState(
+            Element("state").apply {
+                setAttribute("anchor", anchor)
+                setAttribute("scroll-top", scrollTop)
+            },
+            project,
+            file,
+        )
+
+        assertEquals(MilkJEditorState(0, 0), read("0", "0"))
+        assertEquals(MilkJEditorState(7, 900), read("7", "900"))
+        listOf("" to "0", "-1" to "0", "0" to "-1", "1.0" to "2", "a" to "b", " 1" to "2").forEach { (anchor, scrollTop) ->
+            assertSame("'$anchor', '$scrollTop' must be rejected", FileEditorState.INSTANCE, read(anchor, scrollTop))
         }
     }
 

@@ -9,6 +9,7 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
     "noEmit": true
   },
   "include": ["src"]

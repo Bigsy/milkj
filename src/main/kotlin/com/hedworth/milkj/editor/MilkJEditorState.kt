@@ -7,8 +7,8 @@ import kotlin.math.abs
 
 /**
  * What the platform remembers about a MilkJ tab between openings: the ProseMirror selection anchor
- * and the page's scroll offset. The page reports it as `viewstate:<anchor>:<scrollTop>` and takes it
- * back through `window.milkjSetViewState(anchor, scrollTop)`.
+ * and the page's scroll offset. The page reports it in `viewState` messages and takes it back in
+ * `setViewState` ones (see BridgeProtocol.kt).
  */
 data class MilkJEditorState(
     val anchor: Int,
@@ -33,19 +33,10 @@ data class MilkJEditorState(
         private const val ANCHOR_ATTRIBUTE = "anchor"
         private const val SCROLL_TOP_ATTRIBUTE = "scroll-top"
 
-        /** Parses the page's `<anchor>:<scrollTop>` payload; anything but two non-negative ints is dropped. */
-        fun parse(payload: String): MilkJEditorState? {
-            val parts = payload.split(':')
-            if (parts.size != 2) return null
-            val anchor = parts[0].toIntOrNull()?.takeIf { it >= 0 } ?: return null
-            val scrollTop = parts[1].toIntOrNull()?.takeIf { it >= 0 } ?: return null
-            return MilkJEditorState(anchor, scrollTop)
-        }
-
         fun read(element: Element): MilkJEditorState? {
-            val anchor = element.getAttributeValue(ANCHOR_ATTRIBUTE) ?: return null
-            val scrollTop = element.getAttributeValue(SCROLL_TOP_ATTRIBUTE) ?: return null
-            return parse("$anchor:$scrollTop")
+            val anchor = element.getAttributeValue(ANCHOR_ATTRIBUTE)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            val scrollTop = element.getAttributeValue(SCROLL_TOP_ATTRIBUTE)?.toIntOrNull()?.takeIf { it >= 0 } ?: return null
+            return MilkJEditorState(anchor, scrollTop)
         }
     }
 }

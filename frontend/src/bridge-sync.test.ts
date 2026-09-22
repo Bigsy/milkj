@@ -17,7 +17,7 @@ describe("EditorBridgeSync", () => {
 
     expect(sync.messageForMarkdown("user edit\n")).toEqual({
       ok: true,
-      message: "markdown:12\nuser edit\n",
+      message: { type: "markdown", revision: 12, markdown: "user edit\n" },
     });
   });
 
@@ -39,7 +39,7 @@ describe("EditorBridgeSync", () => {
     sync.recordDocumentChange(false);
     expect(sync.messageForMarkdown("later user edit")).toEqual({
       ok: true,
-      message: "markdown:0\nlater user edit",
+      message: { type: "markdown", revision: 0, markdown: "later user edit" },
     });
   });
 
@@ -50,7 +50,7 @@ describe("EditorBridgeSync", () => {
     sync.recordUserEdit();
     expect(sync.messageForMarkdown("one two\n")).toEqual({
       ok: true,
-      message: "markdown:1\none two\n",
+      message: { type: "markdown", revision: 1, markdown: "one two\n" },
     });
 
     // The IDE autosaves the write and relays it back as if it were an external change.
@@ -71,7 +71,7 @@ describe("EditorBridgeSync", () => {
 
     expect(sync.messageForMarkdown("one two three\n")).toEqual({
       ok: true,
-      message: "markdown:2\none two three\n",
+      message: { type: "markdown", revision: 2, markdown: "one two three\n" },
     });
   });
 
@@ -82,13 +82,13 @@ describe("EditorBridgeSync", () => {
     sync.recordUserEdit();
     expect(sync.messageForMarkdown("one two\n")).toEqual({
       ok: true,
-      message: "markdown:4\none two\n",
+      message: { type: "markdown", revision: 4, markdown: "one two\n" },
     });
 
     sync.recordUserEdit();
     expect(sync.messageForMarkdown("one two three\n")).toEqual({
       ok: true,
-      message: "markdown:4\none two three\n",
+      message: { type: "markdown", revision: 4, markdown: "one two three\n" },
     });
   });
 });

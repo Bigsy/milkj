@@ -4,11 +4,7 @@ import com.hedworth.milkj.editor.MilkJEditorState
 import com.hedworth.milkj.images.ImageUploads
 import com.hedworth.milkj.navigation.FileLinkNavigator
 import com.hedworth.milkj.navigation.ProjectFileLinkNavigator
-import com.hedworth.milkj.navigation.hasIsoControlCharacters
-import com.hedworth.milkj.navigation.strictPercentDecode
 import com.hedworth.milkj.settings.MilkJSettings
-import com.hedworth.milkj.settings.enabledWeirpacks
-import com.hedworth.milkj.settings.normalizeDictionary
 import com.intellij.ide.ui.LafManagerListener
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -42,20 +38,20 @@ import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.nio.file.Files
-import java.net.URLDecoder
-import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Base64
 
 /**
  * Two-way bridge between the Milkdown editor (JS, in JCEF) and the IntelliJ document model.
  *
- *  - JS -> IDE: the page calls `window.milkjSendToIde` on every Milkdown change; the handler writes
+ *  - JS -> IDE: the page sends a [PageMessage.Markdown] on every Milkdown change; the handler writes
  *    the new Markdown into the file's `Document` (inside a write command), so undo/redo/save flow
  *    normally.
  *  - IDE -> JS: a `DocumentListener` that, on external edits (e.g. edits made in the native Markdown
- *    tab), pushes the updated Markdown back into Milkdown via [MilkJBrowserConnection.executeJavaScript].
+ *    tab), pushes the updated Markdown back into Milkdown as an [IdeMessage.SetMarkdown].
  *  - Debounce + loop-guard so the two directions don't fight each other.
+ *
+ * The messages themselves are defined in BridgeProtocol.kt.
  */
 class MilkJBridge(
     private val project: Project,
@@ -214,79 +210,60 @@ class MilkJBridge(
         )
     }
 
-    private fun handlePageMessage(message: String) {
+    private fun handlePageMessage(raw: String) {
+        // Decoded on the browser thread that delivered it, so a large edit is not parsed on the EDT.
+        val message = PageMessage.decode(raw) ?: return
         // JCEF delivers page messages on a browser thread; everything below (document text, stamps,
         // VFS) must be read on the EDT — newer platform builds assert on off-EDT document access.
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || !file.isValid) {
                 return@invokeLater
             }
-            when {
-                message == "ready" -> {
-                    pageReady = true
-                    // A restored IntelliJ Document can predate the physical file. Refresh first,
-                    // then refuse page writes if IntelliJ still holds different text; otherwise a
-                    // delayed Milkdown normalization echo could dirty and later autosave the stale
-                    // Document over the newer file.
-                    reconcileDiskAndDocument(pushResolvedContent = false)
-                    // Config first: the page applies theme/placeholder/readonly before the content
-                    // lands, so a config-driven editor rebuild happens while it's still empty.
-                    pushConfig()
-                    pushMarkdown(currentMarkdown())
-                    pendingViewState?.let { state ->
-                        pendingViewState = null
-                        pushViewState(state)
-                    }
+            if (message == PageMessage.Ready) {
+                pageReady = true
+                // A restored IntelliJ Document can predate the physical file. Refresh first, then
+                // refuse page writes if IntelliJ still holds different text; otherwise a delayed
+                // Milkdown normalization echo could dirty and later autosave the stale Document over
+                // the newer file.
+                reconcileDiskAndDocument(pushResolvedContent = false)
+                // Config first: the page applies theme/placeholder/readonly before the content
+                // lands, so a config-driven editor rebuild happens while it's still empty.
+                pushConfig()
+                pushMarkdown(currentMarkdown())
+                pendingViewState?.let { state ->
+                    pendingViewState = null
+                    pushViewState(state)
                 }
-                message.startsWith(VIEW_STATE_PREFIX) && pageReady -> {
-                    MilkJEditorState.parse(message.removePrefix(VIEW_STATE_PREFIX))?.let { viewState = it }
+                return@invokeLater
+            }
+            // Anything else refers to content the page only has once it is ready.
+            if (!pageReady) {
+                return@invokeLater
+            }
+            when (message) {
+                PageMessage.Ready -> Unit
+                is PageMessage.ViewState -> viewState = MilkJEditorState(message.anchor, message.scrollTop)
+                is PageMessage.Markdown -> {
+                    roundTripFailureNotified = false
+                    scheduleDocumentWrite(message)
                 }
-                message.startsWith("markdown:") && pageReady -> {
-                    parsePageMarkdown(message.removePrefix("markdown:"))?.let { pageEdit ->
-                        roundTripFailureNotified = false
-                        scheduleDocumentWrite(pageEdit)
-                    }
-                }
-                message.startsWith(ROUNDTRIP_ERROR_PREFIX) && pageReady -> {
-                    notifyRoundTripFailure(message.removePrefix(ROUNDTRIP_ERROR_PREFIX))
-                }
-                message.startsWith("dictionary:add:") && pageReady -> {
-                    runCatching {
-                        URLDecoder.decode(
-                            message.removePrefix("dictionary:add:"),
-                            StandardCharsets.UTF_8,
-                        )
-                    }.getOrNull()?.let(settings::addDictionaryWord)
-                }
-                message.startsWith(NAVIGATION_PREFIX) && pageReady -> {
-                    handleNavigationPayload(message.removePrefix(NAVIGATION_PREFIX))
-                }
-                message.startsWith(IMAGE_UPLOAD_PREFIX) && pageReady -> {
-                    handleImageUpload(message.removePrefix(IMAGE_UPLOAD_PREFIX))
-                }
-                message.startsWith(EXTERNAL_URL_PREFIX) && pageReady -> {
-                    handleExternalUrlPayload(message.removePrefix(EXTERNAL_URL_PREFIX))
-                }
-                message.startsWith(ZOOM_PREFIX) && pageReady -> {
-                    // The zoom lives in the settings so every tab follows; the settings listener
-                    // above then applies it to this browser along with the others.
-                    settings.applyZoomCommand(message.removePrefix(ZOOM_PREFIX))
-                }
+                is PageMessage.RoundTripError -> notifyRoundTripFailure(message.reason)
+                is PageMessage.DictionaryAdd -> settings.addDictionaryWord(message.word)
+                is PageMessage.NavigateFile -> fileLinkNavigator.navigate(message.href)
+                is PageMessage.NavigateUrl -> openExternalUrl(message.href)
+                is PageMessage.ImageUpload -> handleImageUpload(message)
+                // The zoom lives in the settings so every tab follows; the settings listener above
+                // then applies it to this browser along with the others.
+                is PageMessage.Zoom -> settings.applyZoomCommand(message.command)
             }
         }
-    }
-
-    private fun handleNavigationPayload(payload: String) {
-        val target = decodeValidatedTarget(payload) ?: return
-        fileLinkNavigator.navigate(target)
     }
 
     /**
      * Opens a web link from the page in the OS default browser. JCEF's embedded frame has no
      * popup/navigation handling, so the page forwards clicks here instead of navigating itself.
      */
-    private fun handleExternalUrlPayload(payload: String) {
-        val url = decodeValidatedTarget(payload) ?: return
+    private fun openExternalUrl(url: String) {
         val uri = try {
             URI(url)
         } catch (_: URISyntaxException) {
@@ -307,27 +284,9 @@ class MilkJBridge(
         openInBrowser(uri.toString())
     }
 
-    /** Shared transport-level validation for the `navigate:*` message family; null means dropped. */
-    private fun decodeValidatedTarget(payload: String): String? {
-        if (payload.length > MAX_NAVIGATION_PAYLOAD_CHARS || payload.any { it.code > 0x7f }) {
-            LOG.warn("Dropped invalid MilkJ navigation message: encoded payload is oversized or non-ASCII")
-            return null
-        }
-        val target = try {
-            strictPercentDecode(payload)
-        } catch (_: IllegalArgumentException) {
-            LOG.warn("Dropped invalid MilkJ navigation message: malformed percent encoding or UTF-8")
-            return null
-        }
-        if (target.isBlank() || target.length > MAX_NAVIGATION_TARGET_CHARS || target.hasIsoControlCharacters()) {
-            LOG.warn("Dropped invalid MilkJ navigation message: decoded target is empty, oversized, or contains controls")
-            return null
-        }
-        return target
-    }
-
-    private fun handleImageUpload(payload: String) {
-        val requestId = payload.substringBefore(':').takeIf(ImageUploads::isValidRequestId)
+    private fun handleImageUpload(upload: PageMessage.ImageUpload) {
+        // An id the page could not have generated gets no reply: there is no request to answer.
+        val requestId = upload.requestId.takeIf(ImageUploads::isValidRequestId)
         fun refuse(reason: String) {
             LOG.warn("Refused MilkJ image upload: $reason")
             requestId?.let { replyImageUploaded(it, null) }
@@ -338,7 +297,12 @@ class MilkJBridge(
             refuse("The Markdown file is read-only in MilkJ right now.")
             return
         }
-        val request = ImageUploads.parse(payload).getOrElse { error ->
+        val request = ImageUploads.validate(
+            upload.requestId,
+            upload.fileName,
+            upload.mimeType,
+            upload.base64,
+        ).getOrElse { error ->
             refuse(error.message ?: "The upload message was malformed.")
             return
         }
@@ -354,8 +318,7 @@ class MilkJBridge(
     }
 
     private fun replyImageUploaded(requestId: String, relativePath: String?) {
-        val pathJson = relativePath?.toJsonString() ?: "null"
-        executeJavaScript("window.milkjImageUploaded?.(${requestId.toJsonString()}, $pathJson);")
+        send(IdeMessage.ImageUploaded(requestId, relativePath))
     }
 
     private fun notifyImageUploadFailed(reason: String) {
@@ -369,24 +332,22 @@ class MilkJBridge(
             .notify(project)
     }
 
-    private fun notifyRoundTripFailure(encodedReason: String) {
+    private fun notifyRoundTripFailure(pageReason: String) {
         if (roundTripFailureNotified) return
-        val reason = runCatching {
-            URLDecoder.decode(encodedReason.take(MAX_ROUNDTRIP_ERROR_CHARS), StandardCharsets.UTF_8)
-        }.getOrNull()?.takeIf { it.isNotBlank() }
+        val reason = pageReason.take(MAX_ROUNDTRIP_ERROR_CHARS).takeIf { it.isNotBlank() }
             ?: "The edit could not be mapped safely onto the original Markdown."
         roundTripFailureNotified = true
         NotificationGroupManager.getInstance()
             .getNotificationGroup("MilkJ")
             .createNotification(
                 "MilkJ kept the Markdown source unchanged",
-                "$reason The rich-text edit was reverted; use the built-in source editor for this change.",
+                "${StringUtil.escapeXmlEntities(reason)} The rich-text edit was reverted; use the built-in source editor for this change.",
                 NotificationType.WARNING,
             )
             .notify(project)
     }
 
-    private fun scheduleDocumentWrite(pageEdit: PageEdit) {
+    private fun scheduleDocumentWrite(pageEdit: PageMessage.Markdown) {
         if (pageEdit.revision != pageRevision) {
             // The page emitted an update created from content that the IDE has since replaced.
             pushMarkdown(currentMarkdown())
@@ -475,20 +436,21 @@ class MilkJBridge(
 
     private fun pushMarkdown(markdown: String) {
         pageRevision++
-        executeJavaScript("window.milkjSetMarkdown?.(${markdown.toJsonString()}, $pageRevision);")
+        send(IdeMessage.SetMarkdown(markdown, pageRevision))
     }
 
     private fun pushViewState(state: MilkJEditorState) {
-        executeJavaScript("window.milkjSetViewState?.(${state.anchor}, ${state.scrollTop});")
+        send(IdeMessage.SetViewState(state.anchor, state.scrollTop))
     }
 
     private fun pushConfig() {
-        val configJson = frontendConfigJson(
+        val config = FrontendConfig.from(
             settings.state,
             readonly = !file.isWritable || syncBlocked,
             localImageBaseUrl = localImageBaseUrl,
+            ideIsDark = !JBColor.isBright(),
         )
-        executeJavaScript("window.milkjApplyConfig?.($configJson);")
+        send(IdeMessage.ApplyConfig(config))
         // Zoom is browser state rather than page state, so it travels beside the config instead of
         // inside it; pushConfig only ever runs once the page has loaded.
         connection.setZoom(settings.state.zoomPercent / 100.0)
@@ -556,8 +518,8 @@ class MilkJBridge(
         }
     }
 
-    private fun executeJavaScript(script: String) {
-        connection.executeJavaScript(script)
+    private fun send(message: IdeMessage) {
+        connection.executeJavaScript(message.toScript())
     }
 
     private fun diskMatchesTrustedBaseline(): Boolean {
@@ -603,75 +565,11 @@ class MilkJBridge(
             ),
         )
 
-    private fun parsePageMarkdown(payload: String): PageEdit? {
-        val separator = payload.indexOf('\n')
-        if (separator < 0) {
-            return null
-        }
-        val revision = payload.substring(0, separator).toLongOrNull() ?: return null
-        return PageEdit(revision, payload.substring(separator + 1))
-    }
-
     companion object {
         private val LOG = Logger.getInstance(MilkJBridge::class.java)
         private const val EDITOR_TO_IDE_DEBOUNCE_MS = 250
         private const val IDE_TO_EDITOR_DEBOUNCE_MS = 150
-        private const val NAVIGATION_PREFIX = "navigate:file:"
-        private const val EXTERNAL_URL_PREFIX = "navigate:url:"
-        private const val IMAGE_UPLOAD_PREFIX = "image:upload:"
-        private const val ROUNDTRIP_ERROR_PREFIX = "roundtrip:error:"
-        private const val VIEW_STATE_PREFIX = "viewstate:"
-        private const val ZOOM_PREFIX = "zoom:"
         private const val MAX_ROUNDTRIP_ERROR_CHARS = 1_024
-        private const val MAX_NAVIGATION_PAYLOAD_CHARS = 8 * 1024
-        private const val MAX_NAVIGATION_TARGET_CHARS = 4 * 1024
-
-        internal fun frontendConfigJson(
-            state: MilkJSettings.State,
-            readonly: Boolean,
-            localImageBaseUrl: String? = null,
-        ): String {
-            val effectiveTheme = when (state.theme) {
-                MilkJSettings.ThemeMode.LIGHT -> "light"
-                MilkJSettings.ThemeMode.DARK -> "dark"
-                MilkJSettings.ThemeMode.FOLLOW_IDE -> if (!JBColor.isBright()) "dark" else "light"
-            }
-
-            return buildString {
-                append("{")
-                append("\"theme\":").append(effectiveTheme.toJsonString()).append(",")
-                append("\"configuredTheme\":").append(state.theme.name.toJsonString()).append(",")
-                append("\"editorTheme\":").append(state.editorTheme.name.toJsonString()).append(",")
-                append("\"mermaidTheme\":").append(state.mermaidTheme.name.toJsonString()).append(",")
-                append("\"defaultEditor\":").append(state.defaultEditor.name.toJsonString()).append(",")
-                append("\"placeholder\":").append(state.placeholderText.toJsonString()).append(",")
-                append("\"textFontFamily\":").append(state.textFontFamily.toJsonString()).append(",")
-                append("\"headingFontFamily\":").append(state.headingFontFamily.toJsonString()).append(",")
-                append("\"codeFontFamily\":").append(state.codeFontFamily.toJsonString()).append(",")
-                append("\"proofingEnabled\":").append(state.spellcheckEnabled).append(",")
-                append("\"proofingDialect\":").append(state.proofingDialect.name.toJsonString()).append(",")
-                append("\"customDictionary\":[")
-                normalizeDictionary(state.customDictionary).forEachIndexed { index, word ->
-                    if (index > 0) append(",")
-                    append(word.toJsonString())
-                }
-                append("],")
-                append("\"weirpacks\":[")
-                enabledWeirpacks(state).forEachIndexed { index, data ->
-                    if (index > 0) append(",")
-                    append(data.toJsonString())
-                }
-                append("],")
-                if (localImageBaseUrl != null) {
-                    append("\"localImageBaseUrl\":").append(localImageBaseUrl.toJsonString()).append(",")
-                }
-                append("\"readonly\":").append(readonly)
-                append("}")
-            }
-        }
-
-        private fun String.toJsonString(): String =
-            "\"" + StringUtil.escapeStringCharacters(this) + "\""
     }
 
     private data class WriteBaseline(
@@ -688,6 +586,4 @@ class MilkJBridge(
     )
 
     private data class DiskSnapshot(val text: String, val fingerprint: DiskFingerprint)
-
-    private data class PageEdit(val revision: Long, val markdown: String)
 }

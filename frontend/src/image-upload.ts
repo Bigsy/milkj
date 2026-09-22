@@ -1,19 +1,18 @@
 import type { Node as ProseMirrorNode, Schema } from "@milkdown/kit/prose/model";
+import type { PageMessageOf } from "./protocol";
 
 /**
  * Pasted and dropped images travel to the IDE, which writes them next to the Markdown file and
  * answers with the path the Markdown should reference. Without this, Crepe falls back to
  * `URL.createObjectURL`, and the Markdown ends up holding a `blob:` URL that dies on reload.
  *
- * Wire format (page -> IDE): `image:upload:<request id>:<urlencoded file name>:<mime>:<base64>`.
- * Reply (IDE -> page): `window.milkjImageUploaded(requestId, relativePathOrNull)`.
+ * The request is an `imageUpload` message; the IDE answers with `imageUploaded` (see protocol.ts).
  */
-export const IMAGE_UPLOAD_PREFIX = "image:upload:";
 export const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 export interface ImageUploadClientOptions {
-  send(message: string): void;
+  send(message: PageMessageOf<"imageUpload">): void;
   maxBytes?: number;
   timeoutMs?: number;
   nextRequestId?: () => string;
@@ -23,15 +22,6 @@ export interface ImageUploadClientOptions {
 interface PendingUpload {
   resolve(path: string | null): void;
   timer: ReturnType<typeof setTimeout>;
-}
-
-export function encodeImageUploadMessage(
-  requestId: string,
-  fileName: string,
-  mimeType: string,
-  base64: string,
-): string {
-  return `${IMAGE_UPLOAD_PREFIX}${requestId}:${encodeURIComponent(fileName)}:${mimeType}:${base64}`;
 }
 
 /** Reads a file as base64 without the `data:` URL prefix. */
@@ -51,7 +41,7 @@ export function readFileAsBase64(file: Blob): Promise<string> {
 /** Correlates outbound upload requests with the IDE's asynchronous replies. */
 export class ImageUploadClient {
   private readonly pending = new Map<string, PendingUpload>();
-  private readonly send: (message: string) => void;
+  private readonly send: (message: PageMessageOf<"imageUpload">) => void;
   private readonly maxBytes: number;
   private readonly timeoutMs: number;
   private readonly nextRequestId: () => string;
@@ -79,11 +69,17 @@ export class ImageUploadClient {
     return new Promise<string | null>((resolve) => {
       const timer = setTimeout(() => this.complete(requestId, null), this.timeoutMs);
       this.pending.set(requestId, { resolve, timer });
-      this.send(encodeImageUploadMessage(requestId, file.name || "image", file.type, base64));
+      this.send({
+        type: "imageUpload",
+        requestId,
+        fileName: file.name || "image",
+        mimeType: file.type,
+        base64,
+      });
     });
   }
 
-  /** Called by the IDE (via `window.milkjImageUploaded`) once the file is written or refused. */
+  /** Called for the IDE's `imageUploaded` reply once the file is written or refused. */
   complete(requestId: string, path: string | null | undefined): void {
     const entry = this.pending.get(requestId);
     if (!entry) return;

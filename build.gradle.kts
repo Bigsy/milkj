@@ -133,6 +133,11 @@ val frontendBuild = tasks.register<Exec>("frontendBuild") {
 }
 
 tasks {
+    test {
+        // BridgeProtocolTest reads the shared bridge contract; editing only the fixture must rerun it.
+        inputs.file("protocol/fixtures.json")
+    }
+
     processResources {
         dependsOn(frontendBuild)
         from("THIRD_PARTY_NOTICES.md")

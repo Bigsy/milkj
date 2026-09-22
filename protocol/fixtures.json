@@ -1,0 +1,55 @@
+{
+  "page": {
+    "ready": { "type": "ready" },
+    "markdown": {
+      "type": "markdown",
+      "revision": 7,
+      "markdown": "# Title\r\n\r\nQuote \" backslash \\ tab \t and Ångström 🎉\n"
+    },
+    "roundtripError": {
+      "type": "roundtripError",
+      "reason": "The merged Markdown was not equivalent to the rich-text document."
+    },
+    "dictionaryAdd": { "type": "dictionaryAdd", "word": "C++" },
+    "navigateFile": { "type": "navigateFile", "href": "src/main/kotlin/Foo.kt#L2-L5" },
+    "navigateUrl": { "type": "navigateUrl", "href": "https://example.com/docs?q=a+b#top" },
+    "imageUpload": {
+      "type": "imageUpload",
+      "requestId": "req-1",
+      "fileName": "my shot.png",
+      "mimeType": "image/png",
+      "base64": "iVBORw=="
+    },
+    "viewState": { "type": "viewState", "anchor": 42, "scrollTop": 1200 },
+    "zoom": { "type": "zoom", "command": "in" }
+  },
+  "ide": {
+    "setMarkdown": {
+      "type": "setMarkdown",
+      "markdown": "# Title\r\n\r\nQuote \" backslash \\ and </script> 🎉\n",
+      "revision": 8
+    },
+    "applyConfig": {
+      "type": "applyConfig",
+      "config": {
+        "theme": "dark",
+        "configuredTheme": "FOLLOW_IDE",
+        "editorTheme": "FRAME",
+        "mermaidTheme": "FOREST",
+        "defaultEditor": "MILKJ",
+        "placeholder": "Say \"hi\"\nthen \\ write",
+        "textFontFamily": "Fira Sans",
+        "headingFontFamily": "",
+        "codeFontFamily": "JetBrains Mono",
+        "proofingEnabled": true,
+        "proofingDialect": "AMERICAN",
+        "customDictionary": ["C++", "Ångström"],
+        "weirpacks": ["YWJj"],
+        "readonly": false,
+        "localImageBaseUrl": "http://milkj.localhost/local-image/token/"
+      }
+    },
+    "setViewState": { "type": "setViewState", "anchor": 42, "scrollTop": 1200 },
+    "imageUploaded": { "type": "imageUploaded", "requestId": "req-1", "path": "images/my-shot.png" }
+  }
+}

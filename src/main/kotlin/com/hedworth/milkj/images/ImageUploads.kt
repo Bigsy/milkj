@@ -1,6 +1,5 @@
 package com.hedworth.milkj.images
 
-import com.hedworth.milkj.navigation.strictPercentDecode
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import java.io.IOException
@@ -17,14 +16,14 @@ internal data class ImageUploadRequest(
 )
 
 /**
- * Parsing, naming, and writing for `image:upload:` bridge messages. Everything here operates on
+ * Validation, naming, and writing for `imageUpload` bridge messages. Everything here operates on
  * the VFS only, so it works for any file system IntelliJ can write to (including the test one).
  */
 internal object ImageUploads {
     const val MAX_IMAGE_BYTES: Int = 10 * 1024 * 1024
 
-    /** Base64 of the largest accepted image, plus room for the id, name, and mime fields. */
-    const val MAX_PAYLOAD_CHARS: Int = (MAX_IMAGE_BYTES / 3 + 1) * 4 + 4 * 1024
+    /** Base64 of the largest accepted image. */
+    const val MAX_BASE64_CHARS: Int = (MAX_IMAGE_BYTES / 3 + 1) * 4
 
     private val REQUEST_ID = Regex("^[A-Za-z0-9_-]{1,64}$")
     private val TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
@@ -45,20 +44,16 @@ internal object ImageUploads {
 
     fun isValidRequestId(value: String): Boolean = REQUEST_ID.matches(value)
 
-    /** Parses `<request id>:<urlencoded file name>:<mime>:<base64>`; failures carry a user-facing reason. */
-    fun parse(payload: String): Result<ImageUploadRequest> = runCatching {
-        require(payload.length <= MAX_PAYLOAD_CHARS) { "The image is larger than the 10 MB limit." }
-        require(payload.all { it.code in 0x21..0x7e }) { "The upload message was malformed." }
-        val parts = payload.split(':', limit = 4)
-        require(parts.size == 4) { "The upload message was malformed." }
-        val (requestId, encodedName, mimeType, base64) = parts
+    /** Checks the fields of an `imageUpload` page message; failures carry a user-facing reason. */
+    fun validate(
+        requestId: String,
+        fileName: String,
+        mimeType: String,
+        base64: String,
+    ): Result<ImageUploadRequest> = runCatching {
         require(isValidRequestId(requestId)) { "The upload message was malformed." }
+        require(base64.length <= MAX_BASE64_CHARS) { "The image is larger than the 10 MB limit." }
         require(mimeType in EXTENSION_BY_MIME) { "Only PNG, JPEG, GIF, WebP, SVG, BMP, and AVIF images can be pasted." }
-        val fileName = try {
-            strictPercentDecode(encodedName)
-        } catch (_: IllegalArgumentException) {
-            throw IllegalArgumentException("The upload message was malformed.")
-        }
         require(fileName.none { it.isISOControl() } && fileName.length <= 1024) { "The upload message was malformed." }
         val bytes = try {
             Base64.getDecoder().decode(base64)

@@ -1,11 +1,12 @@
 import type { MarkdownBlockSplitter } from "./markdown-blocks";
+import type { PageMessageOf } from "./protocol";
 import {
   mergeSourcePreservingEdit,
   type MarkdownCanonicalizer,
 } from "./source-preserving-sync";
 
 export type MarkdownSyncResult =
-  | { ok: true; message: string }
+  | { ok: true; message: PageMessageOf<"markdown"> }
   | { ok: false; reason: string; sourceMarkdown: string };
 
 /** Tracks edit origin and keeps the exact IntelliJ source separate from Crepe's serialization. */
@@ -83,7 +84,7 @@ export class EditorBridgeSync {
     this.canonicalSource = markdown;
     return {
       ok: true,
-      message: `markdown:${this.revision}\n${merged.markdown}`,
+      message: { type: "markdown", revision: this.revision, markdown: merged.markdown },
     };
   }
 }

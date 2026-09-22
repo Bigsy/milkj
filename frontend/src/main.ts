@@ -29,70 +29,25 @@ import { type MarkdownBlock, splitMarkdownBlocks } from "./markdown-blocks";
 import { installOutline } from "./outline";
 import { createProjectLinksPlugin, installProjectLinks } from "./project-links";
 import { ProofingController } from "./proofing/plugin";
-import type { ProofingDialect } from "./proofing/types";
+import {
+  type IdeMessage,
+  type IdeMessageOf,
+  type MilkJConfig,
+  type MilkJEditorTheme,
+  type MilkJMermaidTheme,
+  type MilkJTheme,
+  bridgeInstalled,
+  sendToIde,
+} from "./protocol";
 import { type ViewState, ViewStateReporter, normalizeViewState } from "./view-state";
 import { installZoomShortcuts } from "./zoom-keys";
 import "@milkdown/crepe/theme/common/style.css";
 
 // MilkJ frontend entry point: Crepe (Milkdown's batteries-included WYSIWYG editor) plus MilkJ's own
 // plugins, wired to the Kotlin host (../../src/main/kotlin/.../bridge/MilkJBridge.kt) over a JCEF
-// query bridge.
-//
-// Page -> IDE, as strings through `window.milkjSendToIde`:
-//   `ready`                                   the editor exists and can receive content
-//   `markdown:<revision>\n<markdown>`          a user edit, based on the IDE's <revision>
-//   `roundtrip:error:<urlencoded reason>`      an edit that could not be merged safely was reverted
-//   `dictionary:add:<urlencoded word>`         add a word to the custom dictionary
-//   `navigate:file:<urlencoded href>`          Cmd/Ctrl-click on a project file link
-//   `navigate:url:<urlencoded href>`           Cmd/Ctrl-click on an http(s)/mailto link
-//   `image:upload:<id>:<name>:<mime>:<base64>` store a pasted/dropped image next to the file
-//   `viewstate:<anchor>:<scrollTop>`           caret and scroll position, for the editor tab's state
-//   `zoom:in` | `zoom:out` | `zoom:reset`      Ctrl/Cmd +, - or 0; the IDE owns the zoom level
-// IDE -> page: `window.milkjSetMarkdown(markdown, revision)`, `window.milkjApplyConfig(json)`,
-// `window.milkjImageUploaded(requestId, relativePathOrNull)` and
-// `window.milkjSetViewState(anchor, scrollTop)`.
+// query bridge. The messages in both directions are defined in protocol.ts.
 
-declare global {
-  interface Window {
-    // Injected by JCEF (JBCefJSQuery.inject) so the page can push Markdown back to the IDE.
-    milkjSendToIde?: (message: string) => void;
-    // Called by the IDE to push fresh Markdown into the editor (external edits, initial load).
-    milkjSetMarkdown?: (markdown: string, revision: number) => void;
-    milkjApplyConfig?: (config: MilkJConfig) => void;
-    // Called by the IDE once a pasted/dropped image was written (path relative to the Markdown
-    // file) or refused (null).
-    milkjImageUploaded?: (requestId: string, relativePath: string | null) => void;
-    // Called by the IDE to put the caret and scroll position back after a reopened file's content
-    // has been pushed.
-    milkjSetViewState?: (anchor: number, scrollTop: number) => void;
-    milkjBridgeInstalled?: () => void;
-  }
-}
-
-type MilkJTheme = "light" | "dark";
-type MilkJEditorTheme = "NORD" | "CLASSIC" | "FRAME";
-type MilkJMermaidTheme = "AUTO" | "DEFAULT" | "DARK" | "FOREST" | "NEUTRAL" | "BASE";
 type MermaidBuiltInTheme = "default" | "dark" | "forest" | "neutral" | "base";
-
-interface MilkJConfig {
-  theme: MilkJTheme;
-  configuredTheme: "FOLLOW_IDE" | "LIGHT" | "DARK";
-  editorTheme: MilkJEditorTheme;
-  mermaidTheme: MilkJMermaidTheme;
-  defaultEditor: "BUILT_IN" | "MILKJ";
-  placeholder: string;
-  // True when the file is not writable in the IDE; the editor surface must not accept edits.
-  readonly?: boolean;
-  // Font family overrides from settings; blank or absent keeps the editor theme's own fonts.
-  textFontFamily?: string;
-  headingFontFamily?: string;
-  codeFontFamily?: string;
-  proofingEnabled: boolean;
-  proofingDialect: ProofingDialect;
-  customDictionary: string[];
-  weirpacks: string[];
-  localImageBaseUrl?: string;
-}
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -159,10 +114,10 @@ const findBar = installFindBar({
 
 const disposeProjectLinks = installProjectLinks({
   navigate: (href) => {
-    window.milkjSendToIde?.(`navigate:file:${encodeURIComponent(href)}`);
+    sendToIde({ type: "navigateFile", href });
   },
   openExternal: (href) => {
-    window.milkjSendToIde?.(`navigate:url:${encodeURIComponent(href)}`);
+    sendToIde({ type: "navigateUrl", href });
   },
   navigateToAnchor: (href) => {
     const view = currentView();
@@ -174,35 +129,22 @@ const disposeProjectLinks = installProjectLinks({
 
 const outline = installOutline({ getView: currentView });
 
-const imageUploads = new ImageUploadClient({
-  send: (message) => window.milkjSendToIde?.(message),
-});
-window.milkjImageUploaded = (requestId, relativePath) => {
-  imageUploads.complete(requestId, relativePath);
-};
+const imageUploads = new ImageUploadClient({ send: sendToIde });
 const uploadImages = createImageUploader(imageUploads);
 
 // The IDE persists the caret and scroll position with the editor tab. Selection changes are
 // observed from the ProseMirror plugin below; the document itself is what scrolls.
-const viewStateReporter = new ViewStateReporter({
-  send: (message) => window.milkjSendToIde?.(message),
-});
+const viewStateReporter = new ViewStateReporter({ send: sendToIde });
 let pendingViewState: ViewState | undefined;
-window.milkjSetViewState = (anchor, scrollTop) => {
-  pendingViewState = normalizeViewState(anchor, scrollTop);
-  applyPendingViewState();
-};
 window.addEventListener("scroll", scheduleViewStateReport, { passive: true });
 
 // Zoom is applied by the IDE through the browser's page zoom, not by the page itself.
-const disposeZoomShortcuts = installZoomShortcuts({
-  send: (message) => window.milkjSendToIde?.(message),
-});
+const disposeZoomShortcuts = installZoomShortcuts({ send: sendToIde });
 
 const proofingController = new ProofingController({
   onUserEdit: markUserEdit,
   onAddDictionaryWord: (word) => {
-    window.milkjSendToIde?.(`dictionary:add:${encodeURIComponent(word)}`);
+    sendToIde({ type: "dictionaryAdd", word });
   },
 });
 window.addEventListener("pagehide", () => {
@@ -301,9 +243,9 @@ async function createEditor() {
         currentMarkdown = markdown;
         const result = bridgeSync.messageForMarkdown(markdown);
         if (result?.ok) {
-          window.milkjSendToIde?.(result.message);
+          sendToIde(result.message);
         } else if (result) {
-          window.milkjSendToIde?.(`roundtrip:error:${encodeURIComponent(result.reason)}`);
+          sendToIde({ type: "roundtripError", reason: result.reason });
           // Do not leave a rejected edit visible: it was never written to IntelliJ and a later
           // edit must not accidentally include it. Defer the dispatch until this listener returns.
           window.setTimeout(() => restoreSourceAfterUnsafeEdit(result.sourceMarkdown), 0);
@@ -534,7 +476,7 @@ function createMermaidStreamParser(): StreamParser<null> {
   };
 }
 
-window.milkjSetMarkdown = (markdown: string, revision: number) => {
+function setMarkdown({ markdown, revision }: IdeMessageOf<"setMarkdown">) {
   // The IDE relays autosaves of this page's own writes back as pushes. The editor's serialization
   // (currentMarkdown) intentionally differs from the source-preserving markdown the IDE holds, so
   // an echo must be recognized against the source we last sent — replacing the content for it
@@ -566,16 +508,16 @@ window.milkjSetMarkdown = (markdown: string, revision: number) => {
   } else {
     void createEditor();
   }
-};
+}
 
-window.milkjApplyConfig = (config: MilkJConfig) => {
+function applyConfig(config: MilkJConfig) {
   const mermaidThemeBefore = effectiveMermaidTheme();
   const placeholderBefore = currentPlaceholder;
   currentTheme = config.theme;
   currentEditorTheme = config.editorTheme;
   currentMermaidTheme = config.mermaidTheme;
   currentPlaceholder = config.placeholder;
-  currentReadonly = config.readonly === true;
+  currentReadonly = config.readonly;
   currentLocalImageBaseUrl = config.localImageBaseUrl;
   crepe?.setReadonly(currentReadonly);
   findBar.setReadonly(currentReadonly);
@@ -602,6 +544,24 @@ window.milkjApplyConfig = (config: MilkJConfig) => {
   if (needsRebuild && crepe && editorReady && !creatingEditor) {
     void createEditor();
   }
+}
+
+window.milkjReceive = (message: IdeMessage) => {
+  switch (message.type) {
+    case "setMarkdown":
+      setMarkdown(message);
+      break;
+    case "applyConfig":
+      applyConfig(message.config);
+      break;
+    case "setViewState":
+      pendingViewState = normalizeViewState(message.anchor, message.scrollTop);
+      applyPendingViewState();
+      break;
+    case "imageUploaded":
+      imageUploads.complete(message.requestId, message.path);
+      break;
+  }
 };
 
 function announceReady() {
@@ -609,8 +569,8 @@ function announceReady() {
     return;
   }
 
-  if (window.milkjSendToIde) {
-    window.milkjSendToIde("ready");
+  if (bridgeInstalled()) {
+    sendToIde({ type: "ready" });
     readySent = true;
   } else {
     window.setTimeout(announceReady, 100);

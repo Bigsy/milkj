@@ -40,7 +40,7 @@ describe("installZoomShortcuts", () => {
 
     const zoomIn = key({ ctrlKey: true, key: "=" });
     window.dispatchEvent(zoomIn);
-    expect(send).toHaveBeenCalledWith("zoom:in");
+    expect(send).toHaveBeenCalledWith({ type: "zoom", command: "in" });
     expect(zoomIn.defaultPrevented).toBe(true);
 
     const other = key({ ctrlKey: true, key: "b" });

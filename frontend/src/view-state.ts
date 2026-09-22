@@ -3,19 +3,15 @@
  * off. The page reports its state to the IDE, which persists it with the editor tab and hands it
  * back after the content of a reopened file has been pushed.
  *
- * Wire format (page -> IDE): `viewstate:<selection anchor>:<scrollTop>`, both non-negative integers.
- * Restore (IDE -> page): `window.milkjSetViewState(anchor, scrollTop)`.
+ * Reports go out as `viewState` messages and restores come back as `setViewState` (see protocol.ts).
  */
-export const VIEW_STATE_PREFIX = "viewstate:";
+import type { PageMessageOf } from "./protocol";
+
 const DEFAULT_DEBOUNCE_MS = 300;
 
 export interface ViewState {
   anchor: number;
   scrollTop: number;
-}
-
-export function encodeViewStateMessage(state: ViewState): string {
-  return `${VIEW_STATE_PREFIX}${state.anchor}:${state.scrollTop}`;
 }
 
 /** Accepts what the IDE (or a browser API) hands over only when both parts are usable positions. */
@@ -38,13 +34,13 @@ function normalizeOffset(value: unknown): number | undefined {
 }
 
 export interface ViewStateReporterOptions {
-  send(message: string): void;
+  send(message: PageMessageOf<"viewState">): void;
   debounceMs?: number;
 }
 
 /** Coalesces the flood of scroll and selection events into one message per pause. */
 export class ViewStateReporter {
-  private readonly send: (message: string) => void;
+  private readonly send: (message: PageMessageOf<"viewState">) => void;
   private readonly debounceMs: number;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private pending: ViewState | undefined;
@@ -76,7 +72,7 @@ export class ViewStateReporter {
       return;
     }
     this.lastSent = state;
-    this.send(encodeViewStateMessage(state));
+    this.send({ type: "viewState", anchor: state.anchor, scrollTop: state.scrollTop });
   }
 
   dispose(): void {

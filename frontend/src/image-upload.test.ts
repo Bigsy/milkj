@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ImageUploadClient,
   createImageUploader,
-  encodeImageUploadMessage,
   readFileAsBase64,
 } from "./image-upload";
 
@@ -14,12 +13,7 @@ function pngFile(name = "shot.png", bytes: Uint8Array<ArrayBuffer> = PNG_BYTES):
   return new File([bytes], name, { type: "image/png" });
 }
 
-describe("image upload wire format", () => {
-  it("encodes the request with a percent-encoded file name and raw base64", () => {
-    expect(encodeImageUploadMessage("r1", "my shot.png", "image/png", "iVBORw0KGgo="))
-      .toBe("image:upload:r1:my%20shot.png:image/png:iVBORw0KGgo=");
-  });
-
+describe("readFileAsBase64", () => {
   it("reads a file as bare base64", async () => {
     await expect(readFileAsBase64(pngFile())).resolves.toBe("iVBORw==");
   });
@@ -34,7 +28,13 @@ describe("ImageUploadClient", () => {
 
     const upload = client.upload(pngFile("diagram.png"));
     await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
-    expect(send).toHaveBeenCalledWith("image:upload:req-1:diagram.png:image/png:iVBORw==");
+    expect(send).toHaveBeenCalledWith({
+      type: "imageUpload",
+      requestId: "req-1",
+      fileName: "diagram.png",
+      mimeType: "image/png",
+      base64: "iVBORw==",
+    });
 
     client.complete("req-1", "images/diagram.png");
     await expect(upload).resolves.toBe("images/diagram.png");

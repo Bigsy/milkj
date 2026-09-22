@@ -14,12 +14,24 @@ import com.intellij.ide.ui.LafManagerListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.put
 import java.util.Base64
 
 /**
  * Drives the [MilkJBridge] state machine through a [FakeBrowserConnection] instead of a real JCEF
  * browser. Page messages are what the frontend would send via `window.milkjSendToIde`; pushed
- * scripts are what the frontend would receive.
+ * scripts are what the frontend would receive through `window.milkjReceive`.
  */
 class MilkJBridgeTest : BasePlatformTestCase() {
 
@@ -89,23 +101,61 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
     private val pngBase64 = Base64.getEncoder().encodeToString(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47))
 
-    private fun imageUploadReplies(): List<String> =
-        connection.executedScripts.filter { it.startsWith("window.milkjImageUploaded") }
-
-    /** Sends a message the way the page would and lets the bridge's EDT hop run. */
-    private fun sendFromPage(message: String) {
+    /** Sends raw text the way the page would and lets the bridge's EDT hop run. */
+    private fun sendRawFromPage(message: String) {
         connection.pageMessageHandler!!(message)
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
     }
 
-    private fun sendMarkdownFromPage(markdown: String, revision: Long = latestPageRevision()) {
-        sendFromPage("markdown:$revision\n$markdown")
+    private fun sendFromPage(type: String, fields: JsonObjectBuilder.() -> Unit = {}) {
+        sendRawFromPage(
+            buildJsonObject {
+                put("type", type)
+                fields()
+            }.toString(),
+        )
     }
 
-    private fun latestPageRevision(): Long {
-        val script = connection.executedScripts.last { it.startsWith("window.milkjSetMarkdown") }
-        return Regex(", (\\d+)\\);$").find(script)!!.groupValues[1].toLong()
+    private fun sendMarkdownFromPage(markdown: String, revision: Long = latestPageRevision()) {
+        sendFromPage("markdown") {
+            put("revision", revision)
+            put("markdown", markdown)
+        }
     }
+
+    private fun sendImageUpload(requestId: String, fileName: String, mimeType: String, base64: String) {
+        sendFromPage("imageUpload") {
+            put("requestId", requestId)
+            put("fileName", fileName)
+            put("mimeType", mimeType)
+            put("base64", base64)
+        }
+    }
+
+    /** Every message the bridge pushed to the page, in order. */
+    private fun pushedMessages(): List<JsonObject> =
+        connection.executedScripts.map { script ->
+            assertTrue(script, script.startsWith(RECEIVE_PREFIX) && script.endsWith(");"))
+            Json.parseToJsonElement(script.removePrefix(RECEIVE_PREFIX).removeSuffix(");")).jsonObject
+        }
+
+    private fun pushes(type: String): List<JsonObject> =
+        pushedMessages().filter { it.getValue("type").jsonPrimitive.content == type }
+
+    private fun indexOfFirstPush(type: String): Int =
+        pushedMessages().indexOfFirst { it.getValue("type").jsonPrimitive.content == type }
+
+    private fun markdownPushes(): List<String> = pushes("setMarkdown").map { it.getValue("markdown").jsonPrimitive.content }
+
+    private fun configPushes(): List<JsonObject> = pushes("applyConfig").map { it.getValue("config").jsonObject }
+
+    private fun imageUploadReplies(): List<Pair<String, String?>> =
+        pushes("imageUploaded").map {
+            val path = it.getValue("path").jsonPrimitive
+            it.getValue("requestId").jsonPrimitive.content to path.takeIf(JsonPrimitive::isString)?.content
+        }
+
+    private fun latestPageRevision(): Long = pushes("setMarkdown").last().getValue("revision").jsonPrimitive.long
 
     private fun isDocumentUnsaved(): Boolean =
         FileDocumentManager.getInstance().isDocumentUnsaved(document)
@@ -118,10 +168,10 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         sendFromPage("ready")
 
         assertFalse("page-ready alone must never leave unsaved document changes", isDocumentUnsaved())
-        val markdownIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetMarkdown") }
-        val configIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjApplyConfig") }
+        val markdownIndex = indexOfFirstPush("setMarkdown")
+        val configIndex = indexOfFirstPush("applyConfig")
         assertTrue("ready should push the document text to the page", markdownIndex >= 0)
-        assertTrue(connection.executedScripts[markdownIndex].contains("* item one"))
+        assertEquals(listOf("* item one\n"), markdownPushes())
         assertTrue("ready should push the frontend config", configIndex >= 0)
         assertTrue(
             "config must be pushed before content so the page sets up the editor before it lands",
@@ -188,7 +238,10 @@ class MilkJBridgeTest : BasePlatformTestCase() {
     fun testMarkdownMessageBeforeReadyIsIgnored() {
         setUpBridge("original\n")
 
-        sendFromPage("markdown:0\nshould be ignored\n")
+        sendFromPage("markdown") {
+            put("revision", 0)
+            put("markdown", "should be ignored\n")
+        }
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
@@ -196,16 +249,21 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         assertFalse(isDocumentUnsaved())
     }
 
-    fun testNavigationProtocolDecodesAndRequiresReady() {
+    private fun sendNavigateFile(href: String) = sendFromPage("navigateFile") { put("href", href) }
+
+    private fun sendNavigateUrl(href: String) = sendFromPage("navigateUrl") { put("href", href) }
+
+    fun testFileNavigationPassesTheHrefThroughUnchangedAndRequiresReady() {
         setUpBridge("original\n")
 
-        sendFromPage("navigate:file:src%2FFoo.kt%23L2")
+        sendNavigateFile("src/Foo.kt#L2")
         assertEmpty(navigator.targets)
 
         sendFromPage("ready")
-        sendFromPage("navigate:file:src%2FFoo.kt%23L2")
-        sendFromPage("navigate:file:C%2B%2B.kt%23L1")
-        sendFromPage("navigate:file:name%2523part.kt%23L3")
+        sendNavigateFile("src/Foo.kt#L2")
+        sendNavigateFile("C++.kt#L1")
+        // Percent escapes are the link's own; the navigator decodes them, the transport must not.
+        sendNavigateFile("name%23part.kt#L3")
 
         assertEquals(
             listOf("src/Foo.kt#L2", "C++.kt#L1", "name%23part.kt#L3"),
@@ -219,13 +277,13 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         val documentText = document.text
         val scriptsBefore = connection.executedScripts.toList()
 
+        listOf("", "   ", "\u0000file.kt", "a".repeat(PageMessage.MAX_NAVIGATION_TARGET_CHARS + 1))
+            .forEach(::sendNavigateFile)
         listOf(
-            "navigate:file:",
-            "navigate:file:%",
-            "navigate:file:%C3%28",
-            "navigate:file:%00file.kt",
-            "navigate:file:${"a".repeat(8 * 1024 + 1)}",
-        ).forEach(::sendFromPage)
+            """{"type":"navigateFile"}""",
+            """{"type":"navigateFile","href":7}""",
+            """navigate:file:src%2FFoo.kt""",
+        ).forEach(::sendRawFromPage)
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
@@ -238,13 +296,13 @@ class MilkJBridgeTest : BasePlatformTestCase() {
     fun testExternalUrlOpensSystemBrowserAfterReady() {
         setUpBridge("original\n")
 
-        sendFromPage("navigate:url:https%3A%2F%2Fexample.com%2Fdocs%3Fq%3Da%2Bb%23top")
+        sendNavigateUrl("https://example.com/docs?q=a+b#top")
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
         assertEmpty("external URLs must wait for page-ready like other page messages", openedUrls)
 
         sendFromPage("ready")
-        sendFromPage("navigate:url:https%3A%2F%2Fexample.com%2Fdocs%3Fq%3Da%2Bb%23top")
-        sendFromPage("navigate:url:mailto%3Auser%40example.com")
+        sendNavigateUrl("https://example.com/docs?q=a+b#top")
+        sendNavigateUrl("mailto:user@example.com")
 
         assertEquals(
             listOf("https://example.com/docs?q=a+b#top", "mailto:user@example.com"),
@@ -257,17 +315,17 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         sendFromPage("ready")
 
         listOf(
-            "navigate:url:",
-            "navigate:url:%",
-            "navigate:url:%00https%3A%2F%2Fexample.com",
-            "navigate:url:${"a".repeat(8 * 1024 + 1)}",
-            "navigate:url:javascript%3Aalert(1)",
-            "navigate:url:data%3Atext%2Fhtml%2Chello",
-            "navigate:url:vbscript%3Amsgbox(1)",
-            "navigate:url:file%3A%2F%2F%2Fetc%2Fpasswd",
-            "navigate:url:http%3Aexample.com",
-            "navigate:url:mailto%3A",
-        ).forEach(::sendFromPage)
+            "",
+            "%",
+            "\u0000https://example.com",
+            "https://example.com/${"a".repeat(PageMessage.MAX_NAVIGATION_TARGET_CHARS)}",
+            "javascript:alert(1)",
+            "data:text/html,hello",
+            "vbscript:msgbox(1)",
+            "file:///etc/passwd",
+            "http:example.com",
+            "mailto:",
+        ).forEach(::sendNavigateUrl)
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
         assertEmpty(openedUrls)
@@ -282,21 +340,26 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         publisher.lookAndFeelChanged(LafManager.getInstance())
         assertTrue(
             "before ready nothing is pushed",
-            connection.executedScripts.none { it.startsWith("window.milkjApplyConfig") },
+            configPushes().isEmpty(),
         )
 
         sendFromPage("ready")
         connection.executedScripts.clear()
         publisher.lookAndFeelChanged(LafManager.getInstance())
 
-        assertEquals(1, connection.executedScripts.count { it.startsWith("window.milkjApplyConfig") })
+        assertEquals(1, configPushes().size)
         assertFalse(isDocumentUnsaved())
     }
 
     // --- Caret and scroll position ---
 
-    private fun viewStatePushes(): List<String> =
-        connection.executedScripts.filter { it.startsWith("window.milkjSetViewState") }
+    private fun viewStatePushes(): List<Pair<Int, Int>> =
+        pushes("setViewState").map { it.getValue("anchor").jsonPrimitive.int to it.getValue("scrollTop").jsonPrimitive.int }
+
+    private fun sendViewState(anchor: Int, scrollTop: Int) = sendFromPage("viewState") {
+        put("anchor", anchor)
+        put("scrollTop", scrollTop)
+    }
 
     fun testRestoredViewStateWaitsForTheContentAndIsPushedAfterIt() {
         setUpBridge("# Doc\n")
@@ -311,9 +374,9 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         sendFromPage("ready")
 
-        assertEquals(listOf("window.milkjSetViewState?.(12, 340);"), viewStatePushes())
-        val markdownIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetMarkdown") }
-        val viewStateIndex = connection.executedScripts.indexOfFirst { it.startsWith("window.milkjSetViewState") }
+        assertEquals(listOf(12 to 340), viewStatePushes())
+        val markdownIndex = indexOfFirstPush("setMarkdown")
+        val viewStateIndex = indexOfFirstPush("setViewState")
         assertTrue("the position refers to the content, so the content must land first", markdownIndex < viewStateIndex)
         assertFalse(isDocumentUnsaved())
     }
@@ -325,28 +388,36 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         bridge.restoreViewState(MilkJEditorState(anchor = 3, scrollTop = 0))
 
-        assertEquals(listOf("window.milkjSetViewState?.(3, 0);"), viewStatePushes())
+        assertEquals(listOf(3 to 0), viewStatePushes())
     }
 
     fun testPageReportedViewStateIsCachedForGetState() {
         setUpBridge("# Doc\n")
         assertNull(bridge.viewState)
 
-        sendFromPage("viewstate:5:50")
+        sendViewState(5, 50)
         assertNull("reports before ready belong to an editor without content", bridge.viewState)
 
         sendFromPage("ready")
-        sendFromPage("viewstate:40:1200")
+        sendViewState(40, 1200)
         assertEquals(MilkJEditorState(40, 1200), bridge.viewState)
 
-        listOf("viewstate:", "viewstate:a:b", "viewstate:-1:0", "viewstate:1:-2", "viewstate:1:2:3", "viewstate:1.5:2")
-            .forEach(::sendFromPage)
+        listOf(
+            """{"type":"viewState"}""",
+            """{"type":"viewState","anchor":"a","scrollTop":"b"}""",
+            """{"type":"viewState","anchor":-1,"scrollTop":0}""",
+            """{"type":"viewState","anchor":1,"scrollTop":-2}""",
+            """{"type":"viewState","anchor":1.5,"scrollTop":2}""",
+            "viewstate:1:2",
+        ).forEach(::sendRawFromPage)
         assertEquals("malformed reports must not disturb the cached state", MilkJEditorState(40, 1200), bridge.viewState)
         assertEquals("# Doc\n", document.text)
         assertFalse(isDocumentUnsaved())
     }
 
     // --- Zoom ---
+
+    private fun sendZoom(command: String) = sendFromPage("zoom") { put("command", command) }
 
     fun testZoomIsAppliedWithTheConfigOnceThePageIsReady() {
         settings.update(settings.state.copy().apply { zoomPercent = 125 })
@@ -360,23 +431,23 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
     fun testZoomKeysFromThePageStepTheSharedSettingAndReachTheBrowser() {
         setUpBridge("# Doc\n")
-        sendFromPage("zoom:in")
+        sendZoom("in")
         assertEquals("must require ready", 100, settings.state.zoomPercent)
 
         sendFromPage("ready")
         connection.zoomScales.clear()
 
-        sendFromPage("zoom:in")
+        sendZoom("in")
         assertEquals(110, settings.state.zoomPercent)
-        sendFromPage("zoom:in")
+        sendZoom("in")
         assertEquals(125, settings.state.zoomPercent)
-        sendFromPage("zoom:out")
+        sendZoom("out")
         assertEquals(110, settings.state.zoomPercent)
-        sendFromPage("zoom:reset")
+        sendZoom("reset")
         assertEquals(100, settings.state.zoomPercent)
-        sendFromPage("zoom:reset")
-        sendFromPage("zoom:sideways")
-        sendFromPage("zoom:")
+        sendZoom("reset")
+        sendZoom("sideways")
+        sendZoom("")
         assertEquals(100, settings.state.zoomPercent)
 
         assertEquals(
@@ -393,11 +464,11 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Doc\n")
         sendFromPage("ready")
 
-        sendFromPage("zoom:in")
+        sendZoom("in")
         assertEquals(300, settings.state.zoomPercent)
 
         settings.update(settings.state.copy().apply { zoomPercent = 50 })
-        sendFromPage("zoom:out")
+        sendZoom("out")
         assertEquals(50, settings.state.zoomPercent)
     }
 
@@ -407,13 +478,13 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Doc\n")
         sendFromPage("ready")
 
-        sendFromPage("image:upload:req-1:diagram.png:image/png:$pngBase64")
+        sendImageUpload("req-1", "diagram.png", "image/png", "$pngBase64")
 
         val created = file.parent.findFileByRelativePath("images/diagram.png")
         assertNotNull("the image must be written under images/ next to the Markdown file", created)
         assertEquals(4, created!!.length)
         assertEquals(
-            listOf("""window.milkjImageUploaded?.("req-1", "images/diagram.png");"""),
+            listOf("req-1" to "images/diagram.png"),
             imageUploadReplies(),
         )
         assertEquals("# Doc\n", document.text)
@@ -425,15 +496,15 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Doc\n")
         sendFromPage("ready")
 
-        sendFromPage("image:upload:a:shot.png:image/png:$pngBase64")
-        sendFromPage("image:upload:b:shot.png:image/png:$pngBase64")
+        sendImageUpload("a", "shot.png", "image/png", "$pngBase64")
+        sendImageUpload("b", "shot.png", "image/png", "$pngBase64")
 
         assertNotNull(file.parent.findFileByRelativePath("assets/img/shot.png"))
         assertNotNull(file.parent.findFileByRelativePath("assets/img/shot-2.png"))
         assertEquals(
             listOf(
-                """window.milkjImageUploaded?.("a", "assets/img/shot.png");""",
-                """window.milkjImageUploaded?.("b", "assets/img/shot-2.png");""",
+                "a" to "assets/img/shot.png",
+                "b" to "assets/img/shot-2.png",
             ),
             imageUploadReplies(),
         )
@@ -444,26 +515,27 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         setUpBridge("# Doc\n")
         sendFromPage("ready")
 
-        sendFromPage("image:upload:r:image.png:image/png:$pngBase64")
+        sendImageUpload("r", "image.png", "image/png", "$pngBase64")
 
-        val reply = imageUploadReplies().single()
-        assertTrue(reply, Regex("""window\.milkjImageUploaded\?\.\("r", "image-\d{8}-\d{6}\.png"\);""").matches(reply))
+        val (requestId, path) = imageUploadReplies().single()
+        assertEquals("r", requestId)
+        assertTrue(path.toString(), Regex("""image-\d{8}-\d{6}\.png""").matches(path!!))
         assertTrue(file.parent.children.any { it.name.startsWith("image-") && it.extension == "png" })
     }
 
     fun testInvalidImageUploadsAreRefusedWithANullReply() {
         setUpBridge("# Doc\n")
-        sendFromPage("image:upload:early:shot.png:image/png:$pngBase64")
+        sendImageUpload("early", "shot.png", "image/png", "$pngBase64")
         sendFromPage("ready")
 
-        sendFromPage("image:upload:pdf:doc.pdf:application/pdf:$pngBase64")
-        sendFromPage("image:upload:junk:shot.png:image/png:%%%")
-        sendFromPage("image:upload:bad id:shot.png:image/png:$pngBase64")
+        sendImageUpload("pdf", "doc.pdf", "application/pdf", "$pngBase64")
+        sendImageUpload("junk", "shot.png", "image/png", "%%%")
+        sendImageUpload("bad id", "shot.png", "image/png", "$pngBase64")
 
         assertEquals(
             listOf(
-                """window.milkjImageUploaded?.("pdf", null);""",
-                """window.milkjImageUploaded?.("junk", null);""",
+                "pdf" to null,
+                "junk" to null,
             ),
             imageUploadReplies(),
         )
@@ -482,9 +554,9 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         bridge.install()
         sendFromPage("ready")
 
-        sendFromPage("image:upload:blocked:shot.png:image/png:$pngBase64")
+        sendImageUpload("blocked", "shot.png", "image/png", "$pngBase64")
 
-        assertEquals(listOf("""window.milkjImageUploaded?.("blocked", null);"""), imageUploadReplies())
+        assertEquals(listOf<Pair<String, String?>>("blocked" to null), imageUploadReplies())
         assertNull(file.parent.findChild("images"))
     }
 
@@ -540,9 +612,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         )
         assertTrue(
             "a conflict makes MilkJ read-only until IntelliJ reconciles the file",
-            connection.executedScripts.any {
-                it.startsWith("window.milkjApplyConfig") && it.contains("\"readonly\":true")
-            },
+            configPushes().any { it.getValue("readonly").jsonPrimitive.boolean },
         )
     }
 
@@ -566,9 +636,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         assertFalse(document.text == "old restored tab normalized\n")
         assertTrue(
-            connection.executedScripts.any {
-                it.startsWith("window.milkjApplyConfig") && it.contains("\"readonly\":true")
-            },
+            configPushes().any { it.getValue("readonly").jsonPrimitive.boolean },
         )
     }
 
@@ -584,15 +652,13 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         }
         assertTrue(
             "push must be debounced, not immediate",
-            connection.executedScripts.none { it.startsWith("window.milkjSetMarkdown") },
+            markdownPushes().isEmpty(),
         )
 
         bridge.drainDebouncesForTest()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
 
-        val push = connection.executedScripts.singleOrNull { it.startsWith("window.milkjSetMarkdown") }
-        assertNotNull("document change should be pushed to the page", push)
-        assertTrue(push!!.contains("after"))
+        assertEquals("document change should be pushed to the page", listOf("after\n"), markdownPushes())
     }
 
     fun testSavingThePagesOwnEditDoesNotPushItBackToThePage() {
@@ -613,7 +679,7 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         assertFalse(
             "saving the page's own edit must not echo the markdown back (it resets the caret)",
-            connection.executedScripts.any { it.startsWith("window.milkjSetMarkdown") },
+            markdownPushes().isNotEmpty(),
         )
     }
 
@@ -638,67 +704,29 @@ class MilkJBridgeTest : BasePlatformTestCase() {
 
         assertTrue(
             "a genuine external change must still reach the page",
-            connection.executedScripts.any {
-                it.startsWith("window.milkjSetMarkdown") && it.contains("External Change")
-            },
+            "# External Change\n" in markdownPushes(),
         )
     }
 
-    // --- Frontend config JSON ---
+    // --- Frontend config (encoding itself is covered by BridgeProtocolTest against the fixtures) ---
 
-    fun testFrontendConfigJsonEscapesPlaceholderText() {
+    private fun configJson(state: MilkJSettings.State, readonly: Boolean = false): JsonObject =
+        FrontendConfig.from(state, readonly = readonly, ideIsDark = false).toJson()
+
+    fun testFrontendConfigCarriesReadonlyAndProofingIndependently() {
+        val readonly = configJson(MilkJSettings.State(), readonly = true)
+        assertTrue(readonly.getValue("readonly").jsonPrimitive.boolean)
+        assertTrue(readonly.getValue("proofingEnabled").jsonPrimitive.boolean)
+        assertEquals("BRITISH", readonly.getValue("proofingDialect").jsonPrimitive.content)
+
+        val proofingOff = configJson(MilkJSettings.State().apply { spellcheckEnabled = false })
+        assertFalse(proofingOff.getValue("proofingEnabled").jsonPrimitive.boolean)
+        assertFalse(proofingOff.getValue("readonly").jsonPrimitive.boolean)
+    }
+
+    fun testFrontendConfigCarriesTheNormalizedDictionaryAndOnlyEnabledWeirpacks() {
         val state = MilkJSettings.State().apply {
-            placeholderText = "say \"hello\"\nworld \\ backslash"
-        }
-
-        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
-
-        assertTrue("quotes must be escaped", json.contains("""say \"hello\""""))
-        assertTrue("newlines must be escaped", json.contains("""\nworld"""))
-        assertFalse("raw newlines would break the injected script", json.contains("\n"))
-        assertTrue(json.contains("\"readonly\":false"))
-    }
-
-    fun testFrontendConfigJsonCarriesEscapedFontFamilies() {
-        val state = MilkJSettings.State().apply {
-            textFontFamily = "Fira Sans"
-            headingFontFamily = "Family \"Quoted\""
-        }
-
-        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
-
-        assertTrue(json.contains("\"textFontFamily\":\"Fira Sans\""))
-        assertTrue(json.contains("\"headingFontFamily\":\"Family \\\"Quoted\\\"\""))
-        assertTrue("blank means the editor theme's font", json.contains("\"codeFontFamily\":\"\""))
-    }
-
-    fun testFrontendConfigJsonCarriesReadonlyFlag() {
-        val json = MilkJBridge.frontendConfigJson(MilkJSettings.State(), readonly = true)
-        assertTrue(json.contains("\"readonly\":true"))
-        assertTrue(json.contains("\"proofingEnabled\":true"))
-        assertTrue(json.contains("\"proofingDialect\":\"BRITISH\""))
-    }
-
-    fun testFrontendConfigJsonCarriesEscapedLocalImageEndpoint() {
-        val json = MilkJBridge.frontendConfigJson(
-            MilkJSettings.State(),
-            readonly = false,
-            localImageBaseUrl = "http://milkj.localhost/local-image/a token/",
-        )
-        assertTrue(json.contains("\"localImageBaseUrl\":\"http://milkj.localhost/local-image/a token/\""))
-    }
-
-    fun testFrontendConfigJsonEscapesCustomDictionary() {
-        val state = MilkJSettings.State().apply {
-            customDictionary = mutableListOf("C++", "MilkJ's", "quote\"slash\\", "Ångström")
-        }
-        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
-        assertTrue(json.contains("\"customDictionary\":[\"C++\",\"MilkJ's\",\"quote\\\"slash\\\\\",\"Ångström\"]"))
-    }
-
-    fun testFrontendConfigJsonCarriesOnlyEnabledWeirpacks() {
-        val state = MilkJSettings.State().apply {
-            customDictionary = mutableListOf("MilkJ")
+            customDictionary = mutableListOf("MilkJ", " C++ ", "two words", "MilkJ")
             weirpacks = mutableListOf(
                 WeirpackSetting().apply {
                     name = "House style"
@@ -712,11 +740,18 @@ class MilkJBridgeTest : BasePlatformTestCase() {
             )
         }
 
-        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
+        val json = configJson(state)
 
-        assertTrue(json.contains("\"customDictionary\":[\"MilkJ\"]"))
-        assertTrue(json.contains("\"weirpacks\":[\"YWJj\"]"))
-        assertFalse(json.contains("ZGVm"))
+        assertEquals(listOf("C++", "MilkJ"), json.getValue("customDictionary").jsonArray.map { it.jsonPrimitive.content })
+        assertEquals(listOf("YWJj"), json.getValue("weirpacks").jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    fun testFollowIdeResolvesTheThemeFromTheLookAndFeel() {
+        val state = MilkJSettings.State().apply { theme = MilkJSettings.ThemeMode.FOLLOW_IDE }
+        assertEquals("dark", FrontendConfig.from(state, readonly = false, ideIsDark = true).theme)
+        assertEquals("light", FrontendConfig.from(state, readonly = false, ideIsDark = false).theme)
+        val pinned = MilkJSettings.State().apply { theme = MilkJSettings.ThemeMode.LIGHT }
+        assertEquals("light", FrontendConfig.from(pinned, readonly = false, ideIsDark = true).theme)
     }
 
     fun testEncodedDictionaryMessagePersistsWithoutModifyingDocument() {
@@ -725,47 +760,26 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         val wasUnsaved = isDocumentUnsaved()
         connection.executedScripts.clear()
 
-        sendFromPage("dictionary:add:C%2B%2B")
+        sendFromPage("dictionaryAdd") { put("word", "C++") }
 
         assertEquals(listOf("C++"), settings.state.customDictionary)
         assertEquals("original\n", document.text)
         assertEquals(wasUnsaved, isDocumentUnsaved())
-        assertTrue(connection.executedScripts.any {
-            it.startsWith("window.milkjApplyConfig") && it.contains("\"customDictionary\":[\"C++\"]")
+        assertTrue(configPushes().any { config ->
+            config.getValue("customDictionary").jsonArray.map { it.jsonPrimitive.content } == listOf("C++")
         })
-        assertFalse(connection.executedScripts.any { it.startsWith("window.milkjSetMarkdown") })
+        assertTrue(markdownPushes().isEmpty())
     }
 
     fun testInvalidMalformedAndPreReadyDictionaryMessagesAreIgnored() {
         setUpBridge("original\n")
-        sendFromPage("dictionary:add:Proofly")
+        sendFromPage("dictionaryAdd") { put("word", "Proofly") }
         sendFromPage("ready")
-        sendFromPage("dictionary:add:%ZZ")
-        sendFromPage("dictionary:add:two%20words")
-        sendFromPage("dictionary:add:${"x".repeat(65)}")
+        sendRawFromPage("""{"type":"dictionaryAdd","word":7}""")
+        sendFromPage("dictionaryAdd") { put("word", "two words") }
+        sendFromPage("dictionaryAdd") { put("word", "x".repeat(65)) }
         assertEmpty(settings.state.customDictionary)
         assertEquals("original\n", document.text)
-    }
-
-    fun testFrontendConfigJsonCarriesDisabledProofingIndependentlyFromReadonly() {
-        val state = MilkJSettings.State().apply {
-            spellcheckEnabled = false
-            proofingDialect = MilkJSettings.ProofingDialect.BRITISH
-        }
-        val json = MilkJBridge.frontendConfigJson(state, readonly = false)
-        assertTrue(json.contains("\"proofingEnabled\":false"))
-        assertTrue(json.contains("\"proofingDialect\":\"BRITISH\""))
-        assertTrue(json.contains("\"readonly\":false"))
-    }
-
-    fun testEveryProofingDialectSerializes() {
-        MilkJSettings.ProofingDialect.entries.forEach { dialect ->
-            val state = MilkJSettings.State().apply { proofingDialect = dialect }
-            assertTrue(
-                MilkJBridge.frontendConfigJson(state, readonly = false)
-                    .contains("\"proofingDialect\":\"${dialect.name}\""),
-            )
-        }
     }
 
     fun testSettingsCopyPreservesProofingState() {
@@ -789,5 +803,9 @@ class MilkJBridgeTest : BasePlatformTestCase() {
         state.weirpacks.single().data = "changed"
         assertEquals(listOf("MilkJ"), copy.customDictionary)
         assertEquals("YWJj", copy.weirpacks.single().data)
+    }
+
+    private companion object {
+        const val RECEIVE_PREFIX = "window.milkjReceive?.("
     }
 }

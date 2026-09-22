@@ -2,16 +2,10 @@
  * Ctrl/Cmd with `+`, `-` or `0` zooms the editor the way a browser tab would. The page only decides
  * which way to go; the IDE owns the zoom percentage (a MilkJ setting applied to every open tab
  * through the browser's native page zoom) and clamps the steps.
- *
- * Wire format (page -> IDE): `zoom:in`, `zoom:out` or `zoom:reset`.
  */
-export type ZoomCommand = "in" | "out" | "reset";
+import type { PageMessageOf } from "./protocol";
 
-export const ZOOM_PREFIX = "zoom:";
-
-export function encodeZoomMessage(command: ZoomCommand): string {
-  return `${ZOOM_PREFIX}${command}`;
-}
+export type ZoomCommand = PageMessageOf<"zoom">["command"];
 
 /** The zoom command a keydown asks for, or undefined when it is not a zoom shortcut. */
 export function zoomCommandForKey(event: KeyboardEvent): ZoomCommand | undefined {
@@ -41,7 +35,7 @@ export function zoomCommandForKey(event: KeyboardEvent): ZoomCommand | undefined
 }
 
 export interface ZoomShortcutOptions {
-  send(message: string): void;
+  send(message: PageMessageOf<"zoom">): void;
   target?: Window | Document | HTMLElement;
 }
 
@@ -57,7 +51,7 @@ export function installZoomShortcuts(options: ZoomShortcutOptions): () => void {
       return;
     }
     event.preventDefault();
-    options.send(encodeZoomMessage(command));
+    options.send({ type: "zoom", command });
   };
   target.addEventListener("keydown", onKeyDown);
   return () => target.removeEventListener("keydown", onKeyDown);
