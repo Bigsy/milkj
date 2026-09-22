@@ -16,6 +16,7 @@ import {
   splitMarkdownBlocks,
   splitTopLevelBlocks,
 } from "../src/markdown-blocks";
+import { alignSource } from "../src/source-alignment";
 import { mergeSourcePreservingEdit } from "../src/source-preserving-sync";
 import {
   buildCleanDoc,
@@ -155,7 +156,8 @@ function patchCandidate(source: string, canonicalBefore: string, edited: string)
   const dmp = new DiffMatchPatch();
   dmp.Diff_Timeout = 0.1;
   const patches = dmp.patch_make(canonicalBefore, edited);
-  const coordinates = dmp.diff_main(canonicalBefore, source);
+  const coordinates = alignSource(dmp, canonicalBefore, source)?.characters
+    ?? dmp.diff_main(canonicalBefore, source);
   for (const patch of patches as unknown as Array<{ start1: number | null; start2: number | null }>) {
     if (patch.start1 !== null) patch.start1 = dmp.diff_xIndex(coordinates, patch.start1);
     if (patch.start2 !== null) patch.start2 = dmp.diff_xIndex(coordinates, patch.start2);

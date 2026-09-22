@@ -333,7 +333,7 @@ Body text.
       return merge(source, edited, canonicalize, undefined, split);
     }
 
-    it.fails("keeps a drifted 50 KB document intact around an edited table cell", () => {
+    it("keeps a drifted 50 KB document intact around an edited table cell", () => {
       const result = mergeMarkerEdit(drift50k, MARKER_EDITS.tableCell);
 
       expect(result.ok).toBe(true);
@@ -344,7 +344,7 @@ Body text.
       expect(added[0]).toContain(MARKER_EDITS.tableCell.to);
     }, LARGE_TIMEOUT);
 
-    it.fails("inserts exactly the typed character into a drifted 200 KB document", () => {
+    it("inserts exactly the typed character into a drifted 200 KB document", () => {
       const edit = MARKER_EDITS.middle;
 
       const result = mergeMarkerEdit(drift200k, edit);

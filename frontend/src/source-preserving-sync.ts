@@ -2,6 +2,7 @@ import DiffMatchPatch from "diff-match-patch";
 import { mergeEditByBlocks } from "./block-merge";
 import type { EditRegions, SourceBlockIndex } from "./block-index";
 import type { MarkdownBlockSplitter, TopLevelBlock } from "./markdown-blocks";
+import { alignSource, type Diff, lineDiff } from "./source-alignment";
 
 export type MarkdownCanonicalizer = (markdown: string) => string;
 
@@ -69,8 +70,10 @@ export function mergeSourcePreservingEdit(
   // coordinates, but the text being patched is the original source, whose formatting can drift far
   // beyond that radius — one table whose cells the serializer pads to the widest column shifts
   // everything below it by thousands of characters. Translate each hunk's position into source
-  // coordinates first.
-  const coordinateDiffs = dmp.diff_main(canonicalBefore, sourceMarkdown);
+  // coordinates first. The normalized alignment survives formatting drift; a plain diff of the two
+  // texts is only the bounded fallback for documents that differ by more than formatting.
+  const alignment = alignSource(dmp, canonicalBefore, sourceMarkdown);
+  const coordinateDiffs = alignment?.characters ?? dmp.diff_main(canonicalBefore, sourceMarkdown);
   // @types/diff-match-patch mistypes patch_make's elements as the patch_obj constructor.
   for (const patch of patches as unknown as Array<{ start1: number | null; start2: number | null }>) {
     if (patch.start1 !== null) {
@@ -95,7 +98,12 @@ export function mergeSourcePreservingEdit(
   // editor's lines verbatim. The equivalence check below vets either candidate before it is
   // trusted.
   rawCandidates.push(() =>
-    mergeEditByLines(dmp, canonicalBefore, editedCanonicalMarkdown, sourceMarkdown)
+    mergeEditByLines(
+      dmp,
+      canonicalBefore,
+      editedCanonicalMarkdown,
+      alignment?.lines ?? lineDiff(dmp, canonicalBefore, sourceMarkdown),
+    )
   );
   // Last resort: align the two documents by parsed block instead of by text. It is the only
   // strategy that cannot mistake where an edit landed, but it rewrites a whole edited block (or
@@ -173,7 +181,7 @@ export function mergeSourcePreservingEdit(
 
 /**
  * Merges the canonical-text edit into the source at line granularity. The canonical "before" text
- * is the pivot: each of its lines corresponds to source lines (via a line diff of the two) and has
+ * is the pivot: each of its lines corresponds to source lines (via `toSource`, a line alignment of the two) and has
  * a fate in the edited text (via a second line diff). Canonical line runs the edit left untouched
  * emit their source lines byte-for-byte; runs the edit touched emit the editor's lines verbatim.
  * Every output line is therefore either exact source or exact editor output — never a splice of
@@ -184,9 +192,8 @@ function mergeEditByLines(
   dmp: DiffMatchPatch,
   canonicalBefore: string,
   editedCanonicalMarkdown: string,
-  sourceMarkdown: string,
+  toSource: Diff[],
 ): string {
-  const toSource = lineDiff(dmp, canonicalBefore, sourceMarkdown);
   const toEdited = lineDiff(dmp, canonicalBefore, editedCanonicalMarkdown);
   const canonicalLines = splitKeepingNewlines(canonicalBefore);
 
@@ -291,14 +298,6 @@ function splitKeepingNewlines(text: string): string[] {
     result.push(last);
   }
   return result;
-}
-
-/** Line-mode diff: each diff chunk's text is a whole number of lines. */
-function lineDiff(dmp: DiffMatchPatch, before: string, after: string): Array<[number, string]> {
-  const encoded = dmp.diff_linesToChars_(before, after);
-  const diffs = dmp.diff_main(encoded.chars1, encoded.chars2, false);
-  dmp.diff_charsToLines_(diffs, encoded.lineArray);
-  return diffs as Array<[number, string]>;
 }
 
 function preserveSourceLineEndings(source: string, candidate: string): string {
