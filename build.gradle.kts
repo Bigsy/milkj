@@ -1,17 +1,25 @@
 import org.jetbrains.intellij.platform.gradle.IntelliJPlatformType
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
-fun usesUnifiedIntelliJIdea(version: String): Boolean {
+/** Whether a platform version (`2026.2.1` style or a `262.x` build) is at least year.minor / build. */
+fun isPlatformAtLeast(version: String, year: Int, minor: Int, build: Int): Boolean {
     fun numericPart(value: String): Int? = value.takeWhile(Char::isDigit).toIntOrNull()
 
     val parts = version.split('.')
     val first = parts.firstOrNull()?.let(::numericPart) ?: return false
     return if (first >= 2000) {
-        first > 2025 || (first == 2025 && (parts.getOrNull(1)?.let(::numericPart) ?: 0) >= 3)
+        first > year || (first == year && (parts.getOrNull(1)?.let(::numericPart) ?: 0) >= minor)
     } else {
-        first >= 253
+        first >= build
     }
 }
+
+fun usesUnifiedIntelliJIdea(version: String): Boolean = isPlatformAtLeast(version, 2025, 3, 253)
+
+// From 2026.2 the JCEF classes live in the bundled "Web Browser (JCEF)" plugin instead of the core
+// platform, so compiling against it needs that plugin on the classpath. Older platforms have no such
+// plugin to depend on; plugin.xml declares the matching runtime dependency as optional.
+fun hasSeparateJcefPlugin(version: String): Boolean = isPlatformAtLeast(version, 2026, 2, 262)
 
 // MilkJ — IntelliJ plugin: a Milkdown-powered WYSIWYG Markdown editor (JCEF) that sits as a
 // switchable editor tab alongside the built-in IntelliJ Markdown editor.
@@ -52,6 +60,9 @@ dependencies {
             platformType,
             platformVersion,
         )
+        bundledPlugins(platformVersion.map { version ->
+            if (hasSeparateJcefPlugin(version)) listOf("com.intellij.modules.jcef") else emptyList()
+        })
 
         pluginVerifier()
         zipSigner()
