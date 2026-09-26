@@ -58,3 +58,5 @@ temp/
 test.md
 
 CLAUDE.md
+# Python release helper cache
+__pycache__/

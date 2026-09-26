@@ -88,6 +88,21 @@ From there you can choose the default Markdown editor, editor theme, Mermaid the
 
 ## Release builds
 
+For a one-click Marketplace patch release, open **Actions → Release → Run workflow** on
+`main`. The workflow increments the plugin and frontend versions, updates the leading
+`plugin.xml` change-note heading (or prepends a maintenance entry), runs `make release` and
+the plugin verifier, then commits, tags, signs and publishes the release. Only committed
+work on remote `main` is included. To supply specific notes, put an `Unreleased` heading
+at the start of the change notes before running it.
+
+The workflow needs repository secrets `PUBLISH_TOKEN`, `CERTIFICATE_CHAIN`, `PRIVATE_KEY`,
+and `PRIVATE_KEY_PASSWORD`, and repository rules must allow its `GITHUB_TOKEN` to push to
+`main`. Existing `v*` tag releases also run the checks before publishing and must match
+`pluginVersion`. If publishing fails after a manual release was tagged, publish the existing tagged version
+with `./gradlew publishPlugin` and the signing/publishing environment variables configured.
+Do not start another manual release just to retry an upload: it prepares another version.
+Already published Marketplace versions cannot be uploaded again.
+
 Prepare the leading entry in `src/main/resources/META-INF/plugin.xml` for the new release, then run:
 
 ```shell

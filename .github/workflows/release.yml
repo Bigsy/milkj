@@ -1,15 +1,64 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
+concurrency:
+  group: marketplace-release
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+
 jobs:
   publish:
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     name: Sign and publish to JetBrains Marketplace
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check publishing secrets
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          for name in CERTIFICATE_CHAIN PRIVATE_KEY PRIVATE_KEY_PASSWORD PUBLISH_TOKEN; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Test release preparation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Prepare next patch version
+        if: github.event_name == 'workflow_dispatch'
+        id: version
+        run: |
+          git checkout main
+          git pull --ff-only origin main
+          version="$(python3 scripts/bump-release.py)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag matches plugin version
+        if: github.event_name == 'push'
+        run: |
+          version="$(sed -nE 's/^pluginVersion[[:space:]]*=[[:space:]]*//p' gradle.properties | tr -d '[:space:]')"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Release tag does not match pluginVersion=$version"
+            exit 1
+          fi
 
       - uses: pnpm/action-setup@v4
         with:
@@ -28,6 +77,29 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Test and build release
+        run: make release
+
+      - name: Verify plugin compatibility
+        run: ./gradlew verifyPlugin
+
+      - name: Commit and tag manual release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gradle.properties frontend/package.json src/main/resources/META-INF/plugin.xml
+          git commit -m "Release $RELEASE_VERSION"
+          git tag "v$RELEASE_VERSION"
+          git push --atomic origin HEAD:main "refs/tags/v$RELEASE_VERSION"
+
+      # Tags pushed with GITHUB_TOKEN do not trigger another run; publish here too.
       - name: Publish plugin
         run: ./gradlew publishPlugin
         env:

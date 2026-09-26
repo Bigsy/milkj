@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test release preparation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
       - uses: pnpm/action-setup@v4
         with:
           package_json_file: frontend/package.json
