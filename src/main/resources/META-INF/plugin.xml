@@ -34,6 +34,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.25</b>
+    <ul>
+        <li>Updated Harper proofreading to 2.13.0 for improved grammar corrections and dictionary coverage.</li>
+    </ul>
+    <br/>
     <b>0.1.24</b>
     <ul>
         <li>Rich-text edits are no longer reverted in documents whose Markdown is written differently from MilkJ's own style (setext headings, <code>__bold__</code>, <code>*</code> or <code>+</code> bullets, unpadded tables, YAML frontmatter).</li>
