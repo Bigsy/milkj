@@ -34,6 +34,11 @@
     <depends optional="true" config-file="milkj-jcef.xml">com.intellij.modules.jcef</depends>
 
     <change-notes><![CDATA[
+    <b>0.1.26</b>
+    <ul>
+        <li>Updated Harper proofreading to 3.0.0 for improved grammar corrections, dictionary coverage, and capitalization handling.</li>
+    </ul>
+    <br/>
     <b>0.1.25</b>
     <ul>
         <li>Updated Harper proofreading to 2.13.0 for improved grammar corrections and dictionary coverage.</li>

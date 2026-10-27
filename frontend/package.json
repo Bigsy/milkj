@@ -1,7 +1,7 @@
 {
   "name": "@milkj/frontend",
   "private": true,
-  "version": "0.1.25",
+  "version": "0.1.26",
   "packageManager": "pnpm@11.9.0",
   "description": "Milkdown WYSIWYG editor bundle embedded in the MilkJ IntelliJ plugin via JCEF.",
   "type": "module",
@@ -20,7 +20,7 @@
     "@milkdown/kit": "7.21.2",
     "diff-match-patch": "^1.0.5",
     "dompurify": "^3.4.14",
-    "harper.js": "2.13.0",
+    "harper.js": "3.0.0",
     "mermaid": "11.16.0",
     "prosemirror-search": "^1.1.1"
   },

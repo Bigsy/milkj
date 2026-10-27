@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { normalizeHarperLints } from "./normalize";
 import { HarperEngine, resolveDialect, type HarperLinter } from "./harper";
 
-describe("Harper 2.13.0 integration", () => {
+describe("Harper 3.0.0 integration", () => {
   it("resolves automatic dialects from locale regions", () => {
     expect(resolveDialect("AUTO", "en-GB")).toBe("BRITISH");
     expect(resolveDialect("AUTO", "en-AU")).toBe("AUSTRALIAN");
@@ -64,8 +64,51 @@ describe("Harper 2.13.0 integration", () => {
     }
   }, 15_000);
 
-  it("loads a real Weirpack and applies its custom rule", async () => {
+  it("preserves distinct capitalization variants in the custom dictionary", async () => {
     const linter = new LocalLinter({ binary, dialect: Dialect.American });
+    const words = ["Proofly", "proofly", "PROOFLY"];
+    try {
+      await linter.importWords(words);
+      expect((await linter.exportWords()).sort()).toEqual([...words].sort());
+      for (const word of words) {
+        const text = `Use ${word} today.`;
+        const lints = await linter.lint(text, { language: "plaintext" });
+        try {
+          expect(normalizeHarperLints(text, lints).filter((issue) =>
+            issue.startIndex === 4,
+          )).toEqual([]);
+        } finally {
+          lints.forEach((lint) => lint.free());
+        }
+      }
+      await linter.clearWords();
+      expect(await linter.exportWords()).toEqual([]);
+    } finally {
+      await linter.dispose();
+    }
+  }, 15_000);
+
+  it("uses the selected dialect after recreating the real linter", async () => {
+    const engine = new HarperEngine((dialect) => new LocalLinter({ binary, dialect }));
+    const text = "The color looks great in Proofly.";
+    try {
+      const american = await engine.lint(text, "AMERICAN", ["Proofly"]);
+      expect(american.error).toBeUndefined();
+      expect(american.corrections).toEqual([]);
+
+      const british = await engine.lint(text, "BRITISH", ["Proofly"]);
+      expect(british.error).toBeUndefined();
+      expect(british.corrections.some((issue) =>
+        issue.startIndex === 4 && issue.suggestions.some(({ replacement }) => replacement === "colour"),
+      )).toBe(true);
+      expect(british.corrections.some((issue) => issue.startIndex === text.indexOf("Proofly"))).toBe(false);
+    } finally {
+      await engine.dispose();
+    }
+  }, 15_000);
+
+  it("keeps real Weirpack rules and dictionaries through dictionary updates and removes them when disabled", async () => {
+    const engine = new HarperEngine((dialect) => new LocalLinter({ binary, dialect }));
     const bytes = packWeirpackFiles(new Map([
       ["manifest.json", JSON.stringify({
         author: "MilkJ",
@@ -73,6 +116,8 @@ describe("Harper 2.13.0 integration", () => {
         description: "Test house style",
         license: "MIT",
       })],
+      ["dictionary.dict", "1\nProofly\n"],
+      ["annotations.json", JSON.stringify({ affixes: {}, properties: {} })],
       ["Brand.weir", `
 expr main (G Suite)
 let message "Use the updated brand."
@@ -83,21 +128,32 @@ let strategy "Exact"
 test "Use G Suite today." "Use Google Workspace today."
 `],
     ]));
+    const weirpacks = [btoa(String.fromCharCode(...bytes))];
+    const text = "Use G Suite with Proofly today.";
+    const hasPackWordLint = (corrections: ReturnType<typeof normalizeHarperLints>) =>
+      corrections.some((issue) => issue.startIndex === text.indexOf("Proofly"));
+    const hasPackRule = (corrections: ReturnType<typeof normalizeHarperLints>) =>
+      corrections.some((issue) => issue.startIndex === 4 &&
+        issue.suggestions.some(({ replacement }) => replacement === "Google Workspace"));
     try {
-      expect(await linter.loadWeirpackFromBytes(bytes)).toBeUndefined();
-      const text = "Use G Suite today.";
-      const lints = await linter.lint(text, { language: "plaintext" });
-      try {
-        const corrections = normalizeHarperLints(text, lints);
-        expect(corrections.some((issue) =>
-          issue.startIndex === 4 &&
-          issue.suggestions.some(({ replacement }) => replacement === "Google Workspace"),
-        )).toBe(true);
-      } finally {
-        lints.forEach((lint) => lint.free());
+      const baseline = await engine.lint(text, "AMERICAN", []);
+      expect(baseline.error).toBeUndefined();
+      expect(hasPackWordLint(baseline.corrections)).toBe(true);
+      expect(hasPackRule(baseline.corrections)).toBe(false);
+
+      for (const dictionary of [[], ["MilkJ"], []]) {
+        const result = await engine.lint(text, "AMERICAN", dictionary, weirpacks);
+        expect(result.error).toBeUndefined();
+        expect(hasPackRule(result.corrections)).toBe(true);
+        expect(hasPackWordLint(result.corrections)).toBe(false);
       }
+
+      const disabled = await engine.lint(text, "AMERICAN", []);
+      expect(disabled.error).toBeUndefined();
+      expect(hasPackWordLint(disabled.corrections)).toBe(true);
+      expect(hasPackRule(disabled.corrections)).toBe(false);
     } finally {
-      await linter.dispose();
+      await engine.dispose();
     }
   }, 15_000);
 });
